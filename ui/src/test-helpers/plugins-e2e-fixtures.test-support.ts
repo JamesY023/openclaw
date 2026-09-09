@@ -166,6 +166,7 @@ export const discoveryCategories = {
   categories: [
     ["channels", "Channels", "Messaging.", "message-circle"],
     ["models", "Models", "Model providers.", "brain"],
+    ["agent-runtimes", "Agent runtimes", "Agent execution and native sessions.", "bot"],
     ["memory", "Memory", "Memory systems.", "database"],
     ["context", "Context", "Context tools.", "book-open"],
     ["voice", "Voice", "Voice tools.", "message-square"],

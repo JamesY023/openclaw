@@ -8,7 +8,7 @@ import {
   readClawHubBytes,
   readClawHubStringArrayField,
   readClawHubStringField,
-  readRequiredClawHubBooleanField,
+  readRequiredClawHubBooleanField as readRequiredBoolean,
   readRequiredClawHubNumberField,
   readRequiredClawHubStringField,
   withClawHubResponse,
@@ -124,6 +124,7 @@ const PLUGIN_CATEGORY_ICON_KEYS = new Set([
   "activity",
   "book-open",
   "brain",
+  "bot",
   "database",
   "git-branch",
   "globe",
@@ -190,7 +191,7 @@ function parseCatalogPackage(value: unknown, context: string): ClawHubPluginCata
     packageName: readRequiredClawHubStringField(value, "name", context),
     displayName: readRequiredClawHubStringField(value, "displayName", context),
     family,
-    isOfficial: readRequiredClawHubBooleanField(value, "isOfficial", context),
+    isOfficial: readRequiredBoolean(value, "isOfficial", context),
     categories: readClawHubStringArrayField(value, "categories", context) ?? [],
     ...(summary ? { summary } : {}),
     ...(ownerHandle ? { ownerHandle } : {}),
@@ -246,14 +247,6 @@ function readOptionalRecord(
     throw new Error(`Malformed ClawHub ${context}: expected ${field} to be an object.`);
   }
   return value;
-}
-
-function readRequiredBoolean(
-  source: Record<string, unknown>,
-  field: string,
-  context: string,
-): boolean {
-  return readRequiredClawHubBooleanField(source, field, context);
 }
 
 function parseCompatibility(
