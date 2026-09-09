@@ -133,6 +133,18 @@ const PLUGIN_CATEGORY_ICON_KEYS = new Set([
   "palette",
   "shield",
   "wrench",
+  "plug",
+  "code-xml",
+  "server",
+  "files",
+  "inbox",
+  "list-todo",
+  "calendar-days",
+  "wallet-cards",
+  "megaphone",
+  "chart-no-axes-combined",
+  "workflow",
+  "search",
 ]);
 
 function readOptionalNonNegativeNumber(
