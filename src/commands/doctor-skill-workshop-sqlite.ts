@@ -1,7 +1,6 @@
 import { randomUUID } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
-import { truncateWithMarker } from "@openclaw/normalization-core/utf16-slice";
 import { assertWorkspaceStateMigrationReady } from "../agents/workspace-legacy-state.js";
 import { resolveCanonicalWorkspacePath } from "../agents/workspace-state-identity.js";
 import { resolveStateDir } from "../config/paths.js";
@@ -41,7 +40,6 @@ import type { SkillProposalRecord, SkillProposalRollback } from "../skills/works
 import { tableExists } from "../state/openclaw-state-db-schema-helpers.js";
 import type { DB as OpenClawStateDatabase } from "../state/openclaw-state-db.generated.js";
 import {
-  openExistingOpenClawStateDatabaseReadOnly,
   openOpenClawStateDatabase,
   runOpenClawStateWriteTransaction,
 } from "../state/openclaw-state-db.js";
@@ -53,12 +51,18 @@ import {
   type LegacyCollectionBackupRoot,
 } from "./doctor-skill-workshop-collection-backups.js";
 import {
-  classifyWorkshopRelocation,
+  MANIFEST_PATH,
+  MAX_RECORD_BYTES,
+  PROPOSAL_ID_PATTERN,
+  PROPOSALS_DIR,
+  RECOVERY_PROPOSALS_DIR,
+  readLegacyWorkshopJson as readJson,
+} from "./doctor-skill-workshop-readonly.js";
+import {
   inferOwnerAgentId,
   planWorkshopRelocation,
   readLegacyWorkshopSourceStat,
   resolveLegacyWorkshopWorkspaceDir,
-  type LegacyWorkshopProposal,
   type WorkshopProposalUpdate,
 } from "./doctor-skill-workshop-relocation.js";
 import {
@@ -66,18 +70,11 @@ import {
   prepareWorkshopWorkspaceRelocation,
 } from "./doctor-skill-workshop-workspaces.js";
 
-const WORKSHOP_DIR = "skill-workshop";
-const PROPOSALS_DIR = `${WORKSHOP_DIR}/proposals`;
-const MANIFEST_PATH = `${WORKSHOP_DIR}/proposals.json`;
-// Preserve incomplete proposal artifacts outside active discovery so Doctor
-// does not retry an impossible import on every run.
-const RECOVERY_DIR = `${WORKSHOP_DIR}/recovery`;
-const RECOVERY_PROPOSALS_DIR = `${RECOVERY_DIR}/proposals`;
-const MAX_RECORD_BYTES = 1024 * 1024;
+export { inspectLegacySkillWorkshopMigration } from "./doctor-skill-workshop-readonly.js";
+
 // Legacy rollback JSON can expand control characters sixfold across 1 MiB of
 // SKILL.md plus 64 existing 256 KiB support targets.
 const MAX_ROLLBACK_BYTES = 128 * 1024 * 1024;
-const PROPOSAL_ID_PATTERN = /^[a-z0-9][a-z0-9-]{5,120}$/;
 
 type MigrationResult = MigrationMessages & {
   detected: number;
@@ -92,80 +89,6 @@ type WorkshopRelocationResult = {
   warnings: string[];
   recoverableWarningCount: number;
 };
-
-export type LegacyWorkshopMigrationInspection = {
-  externalProposalCount: number;
-  externalProposalCountsByAgent: Record<string, number>;
-  externalProposalDetails?: string[];
-  legacyBackupRootCount: number;
-  preservedLegacyBackupRootCount: number;
-};
-
-async function readJson(rootDir: Root, relativePath: string, maxBytes: number): Promise<unknown> {
-  const read = await rootDir.read(relativePath, {
-    hardlinks: "reject",
-    maxBytes,
-    symlinks: "reject",
-  });
-  return JSON.parse(read.buffer.toString("utf8"));
-}
-
-export async function inspectLegacySkillWorkshopMigration(params: {
-  config: OpenClawConfig;
-  env?: NodeJS.ProcessEnv;
-}): Promise<LegacyWorkshopMigrationInspection> {
-  const env = params.env ?? process.env;
-  const database = await openExistingOpenClawStateDatabaseReadOnly({ env });
-  let records: LegacyWorkshopProposal[] = [];
-  try {
-    if (database && tableExists(database.db, "skill_workshop_proposals")) {
-      const kysely = getNodeSqliteKysely<Pick<OpenClawStateDatabase, "skill_workshop_proposals">>(
-        database.db,
-      );
-      const rows = executeSqliteQuerySync(
-        database.db,
-        kysely.selectFrom("skill_workshop_proposals").select(["record_json", "owner_agent_id"]),
-      ).rows;
-      records = rows.flatMap((row) => {
-        try {
-          const parsed = validateSkillProposalRecord(JSON.parse(row.record_json));
-          return parsed.ok ? [{ record: parsed.value, ownerAgentId: row.owner_agent_id }] : [];
-        } catch {
-          return [];
-        }
-      });
-    }
-  } finally {
-    database?.walMaintenance.close();
-  }
-  // Lint needs ownership counts, not adoption verification through writable recovery readers.
-  const { external } = classifyWorkshopRelocation(records, params.config, env);
-  const backups = await listPendingLegacyCollectionBackupRoots(params.config, env);
-  return {
-    externalProposalCount: external.length,
-    externalProposalCountsByAgent: external.reduce<Record<string, number>>((counts, plan) => {
-      const ownerAgentId = plan.ownerAgentId ?? plan.unconfiguredOwnerAgentId ?? "unknown";
-      counts[ownerAgentId] = (counts[ownerAgentId] ?? 0) + 1;
-      return counts;
-    }, {}),
-    ...(external.length > 0
-      ? {
-          externalProposalDetails: external
-            .toSorted((left, right) => left.record.id.localeCompare(right.record.id))
-            .slice(0, 20)
-            .map(({ record, ownerAgentId, unconfiguredOwnerAgentId }) =>
-              truncateWithMarker(
-                `${record.id}: ${record.target.skillDir} (owner: ${ownerAgentId ?? unconfiguredOwnerAgentId ?? "unknown"})`,
-                2000,
-                { marker: "…", reserve: 1, trimEnd: true },
-              ),
-            ),
-        }
-      : {}),
-    legacyBackupRootCount: backups.length,
-    preservedLegacyBackupRootCount: backups.filter((backup) => "warning" in backup).length,
-  };
-}
 
 async function relocateLegacyWorkshopTargets(
   config: OpenClawConfig,

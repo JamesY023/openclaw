@@ -50,6 +50,7 @@ import {
 } from "./io.js";
 import {
   containsConfigIncludeDirective,
+  hashConfigRaw,
   rejectConfigNonFiniteNumbers,
   resolveManagedRuntimeEnvBaseline,
 } from "./io.read-helpers.js";
@@ -85,6 +86,7 @@ import {
 } from "./runtime-write-application.js";
 import type { ConfigFileSnapshot, OpenClawConfig } from "./types.js";
 import { validateConfigObjectWithPlugins } from "./validation.js";
+import { getConfigFileWriteCapture, recordConfigFileWrite } from "./write-capture.js";
 import {
   captureConfigWriteLockGuard,
   markActiveConfigMutationPath,
@@ -946,6 +948,13 @@ async function tryWriteIncludeOwnedConfigMutation(params: {
           !hadRuntimeSnapshot &&
           !getRuntimeConfigSnapshotRefreshHandler()
         ) {
+          if (getConfigFileWriteCapture()) {
+            recordConfigFileWrite(
+              includeTarget.absolutePath,
+              previousIncludeRaw === null ? null : hashConfigRaw(previousIncludeRaw),
+              hashConfigRaw(committedIncludeRaw),
+            );
+          }
           return { persistedHash: null, persistedConfig: runtimeConfigToWrite };
         }
 
@@ -1031,6 +1040,13 @@ async function tryWriteIncludeOwnedConfigMutation(params: {
               { cause },
             ),
         });
+        if (getConfigFileWriteCapture()) {
+          recordConfigFileWrite(
+            includeTarget.absolutePath,
+            previousIncludeRaw === null ? null : hashConfigRaw(previousIncludeRaw),
+            hashConfigRaw(committedIncludeRaw),
+          );
+        }
         return { persistedHash, persistedConfig: refreshedSnapshot.sourceConfig };
       } catch (error) {
         try {

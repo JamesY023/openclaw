@@ -16,7 +16,10 @@ import {
   UPDATE_POST_INSTALL_DOCTOR_RESULT_PATH_ENV,
   type UpdatePostInstallDoctorResult,
 } from "../../infra/update-doctor-result.js";
-import { buildUpdateDoctorEnv } from "../../infra/update-runner-doctor.js";
+import {
+  buildUpdateDoctorEnv,
+  buildUpdateRecoveryDoctorArgs,
+} from "../../infra/update-runner-doctor.js";
 import { redactSupportString } from "../../logging/diagnostic-support-redaction.js";
 import { formatCommandOutput } from "../../process/command-error.js";
 import { isPlainCommandExitFailure, runExec } from "../../process/exec.js";
@@ -97,6 +100,7 @@ function createPostPluginDoctorExecutionFailure(
 }
 
 export async function runUpdateFinalizationDoctorInFreshProcess(params: {
+  updateRecoveryBackup?: import("../../infra/update-recovery-backup.js").UpdateRecoveryBackupRef;
   phase: UpdateDoctorPhase;
   root: string;
   yes: boolean;
@@ -118,6 +122,7 @@ export async function runUpdateFinalizationDoctorInFreshProcess(params: {
     "--non-interactive",
     ...(params.workspaceSuggestions ? [] : ["--no-workspace-suggestions"]),
     ...(params.yes ? ["--yes"] : []),
+    ...buildUpdateRecoveryDoctorArgs(params.updateRecoveryBackup),
   ];
   const baseEnv = stripGatewayServiceMarkerEnv(disableUpdatedPackageCompileCacheEnv(process.env));
   delete baseEnv[UPDATE_POST_CORE_CONVERGENCE_ENV];
@@ -225,6 +230,7 @@ async function validatePostPluginConfigInFreshProcess(params: {
 }
 
 async function completePostPluginInFreshProcess(params: {
+  updateRecoveryBackup?: import("../../infra/update-recovery-backup.js").UpdateRecoveryBackupRef;
   root: string;
   pluginUpdate: PostCorePluginUpdateResult;
   yes: boolean;
@@ -285,6 +291,7 @@ async function completePostPluginInFreshProcess(params: {
 }
 
 export async function completePostCorePluginUpdate(params: {
+  updateRecoveryBackup?: import("../../infra/update-recovery-backup.js").UpdateRecoveryBackupRef;
   root: string;
   pluginUpdate: PostCorePluginUpdateResult;
   freshDoctorRequired: boolean;
@@ -304,6 +311,7 @@ export async function completePostCorePluginUpdate(params: {
     // The current process can still hold the pre-update plugin and schema. Reload the updated
     // migration owner before trusting strict validation or restarting the gateway.
     const freshResult = await completePostPluginInFreshProcess({
+      updateRecoveryBackup: params.updateRecoveryBackup,
       root: params.root,
       pluginUpdate,
       yes: params.yes,
