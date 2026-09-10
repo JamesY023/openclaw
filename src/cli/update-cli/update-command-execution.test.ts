@@ -9,6 +9,7 @@ import type { PreManagedServiceStop } from "./update-command-service.js";
 
 const mocks = vi.hoisted(() => ({
   captureManagedContext: vi.fn(),
+  assertNoUnresolvedCapture: vi.fn<() => Promise<void>>(),
   captureManagedPreflight:
     vi.fn<
       typeof import("./update-command-managed-context.js").captureOwnedManagedUpdatePreflightContext
@@ -33,6 +34,11 @@ const mocks = vi.hoisted(() => ({
   serviceStopped: false,
   shouldBlockServiceUpdate: vi.fn(),
   verifyPackageRecovery: vi.fn(),
+}));
+
+vi.mock("../../infra/update-recovery-backup.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../infra/update-recovery-backup.js")>()),
+  assertNoUnresolvedUpdateRecoveryBackup: mocks.assertNoUnresolvedCapture,
 }));
 
 vi.mock("../../infra/update-global.js", async (importOriginal) => ({
@@ -184,6 +190,7 @@ function inspectOrStopService(phase: "inspect" | "prepare" = "prepare"): PreMana
 beforeEach(() => {
   vi.clearAllMocks();
   mocks.serviceStopped = false;
+  mocks.assertNoUnresolvedCapture.mockResolvedValue(undefined);
   mocks.validateCanary.mockResolvedValue({
     status: "ok",
     phase: "readiness",
@@ -212,6 +219,21 @@ beforeEach(() => {
 });
 
 describe("mutable update execution", () => {
+  it("refuses another protected update before housekeeping or service stop", async () => {
+    const detail =
+      "Unresolved capture /fixture/state.update-captures/failed-run. Run openclaw update status --json; resolve with npx openclaw@latest doctor --fix.";
+    mocks.assertNoUnresolvedCapture.mockRejectedValue(new Error(detail));
+    const execution = await executeMutableUpdate(executionParams("package"));
+    expect(execution).toMatchObject({
+      mutationStarted: false,
+      result: { status: "error", reason: "update-recovery-pending" },
+      failure: { detail },
+    });
+    expect(mocks.prepareMutableUpdate).not.toHaveBeenCalled();
+    expect(mocks.runPackageUpdate).not.toHaveBeenCalled();
+    expect(mocks.serviceStopped).toBe(false);
+  });
+
   it("refuses service admission before mutable startup housekeeping", async () => {
     mocks.maybeStopService.mockImplementation(async ({ phase, handoffFromGateway }) => {
       if (handoffFromGateway) {

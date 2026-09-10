@@ -274,7 +274,8 @@ export async function validateUpdateCandidateCanary(params: {
       timeoutMs: remaining(),
       signal: params.signal,
     });
-    env = { ...rehearsal.env };
+    // Rehearsal owns disposable state, not the serving update transaction.
+    env = { ...rehearsal.env, OPENCLAW_UPDATE_IN_PROGRESS: "0" };
     const { port } = rehearsal;
     const commands: Array<{ phase: CanaryPhase; name: string; args: string[]; entry?: string }> = [
       {
@@ -308,7 +309,6 @@ export async function validateUpdateCandidateCanary(params: {
     ];
     for (const command of commands) {
       phase = command.phase;
-      env.OPENCLAW_UPDATE_IN_PROGRESS = phase === "doctor" ? "1" : "0";
       remaining();
       const commandStart = Date.now();
       const running = launch(command.entry ?? entry, command.args);

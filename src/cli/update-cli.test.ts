@@ -8,6 +8,8 @@ import os from "node:os";
 import path from "node:path";
 import { expectDefined } from "@openclaw/normalization-core";
 import { Command } from "commander";
+// Jiti captures host path semantics at import, before service-platform spies run.
+import "jiti";
 import { afterAll, afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from "vitest";
 import { PLUGIN_CAPABILITY_CONSENT_REQUIRED } from "../../packages/gateway-protocol/src/capability-consent-error-details.js";
 import { stripAnsi } from "../../packages/terminal-core/src/ansi.js";
@@ -49,7 +51,13 @@ import { ManagedPluginLifecycleError } from "../plugins/management-lifecycle-err
 import { OPENCLAW_AGENT_SCHEMA_VERSION } from "../state/openclaw-agent-db-contract.js";
 import { OPENCLAW_STATE_SCHEMA_VERSION } from "../state/openclaw-state-db-contract.js";
 import { resolveOpenClawStateSqlitePath } from "../state/openclaw-state-db.paths.js";
-import { captureEnv, withEnvAsync } from "../test-utils/env.js";
+import {
+  captureEnv,
+  createPathResolutionEnv,
+  deleteTestEnvValue,
+  setTestEnvValue,
+  withEnvAsync,
+} from "../test-utils/env.js";
 import { getFreePort } from "../test-utils/ports.js";
 import { VERSION } from "../version.js";
 import { createCliRuntimeCapture, getMockCallOutput } from "./test-runtime-capture.js";
@@ -251,9 +259,13 @@ vi.mock("../daemon/gateway-entrypoint.js", async (importOriginal) => {
   };
 });
 
-vi.mock("../config/config.js", () => {
+vi.mock("../config/config.js", async () => {
+  const configPaths = await import("../config/paths.js");
   const readConfigFileSnapshot = vi.fn();
   return {
+    resolveConfigPath: configPaths.resolveConfigPath,
+    resolveOAuthDir: configPaths.resolveOAuthDir,
+    resolveStateDir: configPaths.resolveStateDir,
     createConfigIO: (
       options: {
         pluginValidation?: string;
@@ -387,7 +399,10 @@ vi.mock("node:child_process", async () => {
   const actual = await vi.importActual<typeof import("node:child_process")>("node:child_process");
   return {
     ...actual,
-    execFile,
+    execFile: (...args: Parameters<typeof actual.execFile>) =>
+      Array.isArray(args[1]) && args[1].includes("--openclaw-sqlite-readonly-child")
+        ? actual.execFile(...args)
+        : execFile(...args),
     spawn,
   };
 });
@@ -653,6 +668,8 @@ const { createUpdateRun, getUpdateRun, listUpdateRuns } =
   await import("../infra/update-run-ledger.js");
 const { closeOpenClawStateDatabaseForTest } = await import("../state/openclaw-state-db.js");
 // Real recovery dependencies need the initialized runtime and child-process mocks.
+const snapshotRepository = await import("../snapshot/local-repository.js");
+const ensureHostSnapshotRoot = snapshotRepository.ensurePrivateSnapshotRepositoryRoot;
 const { runUpdateFailureTriage } = await import("../infra/update-triage.js");
 const { resolveOpenClawPackageRoot } = await import("../infra/openclaw-root.js");
 const { resolveGatewayInstallEntrypoint } = await import("../daemon/gateway-entrypoint.js");
@@ -745,6 +762,7 @@ describe("update-cli", () => {
   let fixtureCount = 0;
   const tempDirs = useAutoCleanupTempDirTracker(afterEach);
   const tempDirsToCleanup = new Set<string>();
+  let restoreCaseHome: (() => void) | undefined;
 
   const createCaseDir = (prefix: string) => {
     const dir = path.join(fixtureRoot, `${prefix}-${fixtureCount++}`);
@@ -754,9 +772,9 @@ describe("update-cli", () => {
 
   const baseConfig = {} as OpenClawConfig;
   const baseSnapshot: ConfigFileSnapshot = {
-    path: "/tmp/openclaw-config.json",
+    path: resolveConfigPath(),
     exists: true,
-    raw: "{}",
+    raw: "{}\n",
     parsed: {},
     resolved: baseConfig,
     sourceConfig: baseConfig,
@@ -1444,6 +1462,7 @@ describe("update-cli", () => {
     overrides: Partial<ConfigFileSnapshot> = {},
   ): ConfigFileSnapshot => ({
     ...baseSnapshot,
+    raw: `${JSON.stringify(config)}\n`,
     parsed: config,
     resolved: config,
     sourceConfig: config,
@@ -1452,8 +1471,10 @@ describe("update-cli", () => {
     ...overrides,
   });
 
-  const useFileBackedConfig = async (): Promise<void> => {
-    const configPath = resolveConfigPath();
+  const writeConfigFixture = async (
+    config: OpenClawConfig = baseConfig,
+    configPath = resolveConfigPath(),
+  ): Promise<ConfigFileSnapshot> => {
     const previous = await fs.readFile(configPath, "utf8").catch((error: unknown) => {
       if (!isMissingPathError(error)) {
         throw error;
@@ -1467,16 +1488,19 @@ describe("update-cli", () => {
         await fs.writeFile(configPath, previous);
       }
     });
-    const raw = "{}\n";
+    const raw = `${JSON.stringify(config)}\n`;
     await fs.mkdir(path.dirname(configPath), { recursive: true });
     await fs.writeFile(configPath, raw, { mode: 0o600 });
-    vi.mocked(readConfigFileSnapshot).mockResolvedValue(
-      configSnapshot(baseConfig, {
-        path: configPath,
-        raw,
-        hash: createHash("sha256").update(raw).digest("hex"),
-      }),
-    );
+    const snapshot = configSnapshot(config, {
+      path: configPath,
+      raw,
+      hash: createHash("sha256").update(raw).digest("hex"),
+    });
+    return snapshot;
+  };
+
+  const useFileBackedConfig = async (): Promise<void> => {
+    vi.mocked(readConfigFileSnapshot).mockResolvedValue(await writeConfigFixture());
   };
 
   const stableConfig = (overrides: Omit<OpenClawConfig, "update"> = {}): OpenClawConfig => ({
@@ -1930,6 +1954,21 @@ describe("update-cli", () => {
   };
 
   beforeEach(async () => {
+    // Recovery belongs to one update history; independent cases need independent profiles.
+    const home = createCaseDir("home");
+    await fs.mkdir(home, { mode: 0o700 });
+    const homeKeys = ["HOME", "USERPROFILE", "HOMEDRIVE", "HOMEPATH", "OPENCLAW_HOME"];
+    const caseHome = captureEnv(homeKeys);
+    restoreCaseHome = () => caseHome.restore();
+    const homeEnv = createPathResolutionEnv(home);
+    for (const key of homeKeys) {
+      const value = homeEnv[key];
+      if (value === undefined) {
+        deleteTestEnvValue(key);
+      } else {
+        setTestEnvValue(key, value);
+      }
+    }
     const executorTmp = tempDirs.make("update-cli-owner-");
     absentServicePort = await getFreePort();
     const gatewayEntrypoint = await import("../daemon/gateway-entrypoint.js");
@@ -1952,6 +1991,24 @@ describe("update-cli", () => {
     }
     restartHealthTestControl.snapshot = undefined;
     vi.resetAllMocks();
+    // Filesystem trust follows the host; nested service-platform spies keep their descriptor.
+    vi.spyOn(snapshotRepository, "ensurePrivateSnapshotRepositoryRoot").mockImplementation(
+      async (rootPath) => {
+        const descriptor = expectDefined(
+          Object.getOwnPropertyDescriptor(process, "platform"),
+          "host platform descriptor",
+        );
+        Object.defineProperty(process, "platform", {
+          configurable: true,
+          value: sqliteHostPlatform,
+        });
+        try {
+          return await ensureHostSnapshotRoot(rootPath);
+        } finally {
+          Object.defineProperty(process, "platform", descriptor);
+        }
+      },
+    );
     // Service simulations do not provide foreign-platform ACL libraries. Keep
     // real exclusive host creation; actual Windows runs retain the native DACL path.
     if (sqliteHostPlatform !== "win32") {
@@ -2037,7 +2094,12 @@ describe("update-cli", () => {
       indeterminate: [],
     });
     vi.mocked(resolveOpenClawPackageRoot).mockResolvedValue(process.cwd());
-    vi.mocked(readConfigFileSnapshot).mockResolvedValue(baseSnapshot);
+    baseSnapshot.path = resolveConfigPath();
+    await writeConfigFixture();
+    vi.mocked(readConfigFileSnapshot).mockImplementation(async () => ({
+      ...baseSnapshot,
+      path: resolveConfigPath(),
+    }));
     vi.mocked(readSourceConfigBestEffort).mockResolvedValue(baseSnapshot.config);
     setupConfigMutationWithRetryMock();
     vi.mocked(fetchNpmTagVersion).mockResolvedValue({
@@ -2184,6 +2246,8 @@ describe("update-cli", () => {
   afterEach(async () => {
     vi.restoreAllMocks();
     closeOpenClawStateDatabaseForTest();
+    restoreCaseHome?.();
+    restoreCaseHome = undefined;
     if (tempDirsToCleanup.size === 0) {
       return;
     }
@@ -2809,9 +2873,14 @@ describe("update-cli", () => {
         ...baseConfig,
         update: { channel: "beta" as const },
       };
-      const managedSnapshot = configSnapshot(managedConfig, {
-        path: path.join(managedState, "openclaw.json"),
-      });
+      const managedSnapshot = await writeConfigFixture(
+        managedConfig,
+        path.join(managedState, "openclaw.json"),
+      );
+      const personalSnapshot = await writeConfigFixture(
+        baseConfig,
+        path.join(personalState, "openclaw.json"),
+      );
       const managedRecords = {
         telegram: { source: "npm", spec: "@openclaw/telegram@beta" },
       } satisfies Record<string, PluginInstallRecord>;
@@ -2828,7 +2897,7 @@ describe("update-cli", () => {
         },
       );
       vi.mocked(readConfigFileSnapshot).mockImplementation(async () =>
-        process.env.OPENCLAW_PROFILE === "work" ? managedSnapshot : baseSnapshot,
+        process.env.OPENCLAW_PROFILE === "work" ? managedSnapshot : personalSnapshot,
       );
       loadInstalledPluginIndexInstallRecords.mockImplementation(async (options = {}) =>
         options.env?.OPENCLAW_PROFILE === "work" ? managedRecords : {},
@@ -2885,6 +2954,7 @@ describe("update-cli", () => {
 
   it("keeps foreign-service updates in the caller profile", async () => {
     const personalState = profileStateDir("personal");
+    await writeConfigFixture(baseConfig, path.join(personalState, "openclaw.json"));
     const { root, entrypoints } = setupUpdatedRootRefresh();
     const foreignRoot = tempDirs.make("openclaw-update-foreign-profile-");
     const foreignEntrypoint = await writeOpenClawPackageFixture(foreignRoot, "2026.4.21", {
@@ -2936,6 +3006,8 @@ describe("update-cli", () => {
   it("keeps forced post-core fallback and fresh validation in the stopped service profile", async () => {
     const updatedEntrypoint = await setupManagedGitRootRefresh();
     const managedState = profileStateDir("work");
+    await writeConfigFixture(baseConfig, path.join(managedState, "openclaw.json"));
+    await writeConfigFixture(baseConfig, path.join(profileStateDir("personal"), "openclaw.json"));
     primeServiceCommand(["node", path.join(process.cwd(), "dist", "index.js"), "gateway", "run"], {
       OPENCLAW_PROFILE: "work",
       OPENCLAW_STATE_DIR: managedState,
@@ -3007,6 +3079,8 @@ describe("update-cli", () => {
         candidate === path.join(process.cwd(), "openclaw.mjs"),
     );
     const managedState = profileStateDir("work");
+    await writeConfigFixture(baseConfig, path.join(managedState, "openclaw.json"));
+    await writeConfigFixture(baseConfig, path.join(profileStateDir("personal"), "openclaw.json"));
     primeServiceCommand(["node", path.join(process.cwd(), "dist", "index.js"), "gateway", "run"], {
       OPENCLAW_PROFILE: "work",
       OPENCLAW_STATE_DIR: managedState,
@@ -3223,7 +3297,7 @@ describe("update-cli", () => {
     expectNoSideEffects(serviceRestart, runDaemonRestart);
     expect(defaultRuntime.exit).not.toHaveBeenCalled();
     expect(getLogOutput()).not.toContain("Update Result: OK");
-    expect(spawn).toHaveBeenCalled();
+    expect(spawn, getErrorOutput() + getLogOutput()).toHaveBeenCalled();
     expect(resumeScheduledTaskAutoStartAfterUpdate).toHaveBeenCalledOnce();
     const pluginStartOrder = requireValue(spawn.mock.invocationCallOrder[0], "plugin child start");
     const starts = vi
@@ -3268,9 +3342,10 @@ describe("update-cli", () => {
     } as OpenClawConfig;
     let capturedRecords: unknown;
     let capturedSourceConfig: unknown;
-    vi.mocked(readConfigFileSnapshot).mockResolvedValue(
-      configSnapshot(preUpdateConfig, { resolved: baseConfig }),
-    );
+    vi.mocked(readConfigFileSnapshot).mockResolvedValue({
+      ...(await writeConfigFixture(preUpdateConfig)),
+      resolved: baseConfig,
+    });
     loadInstalledPluginIndexInstallRecords.mockResolvedValueOnce(pluginInstallRecords);
     spawn.mockImplementationOnce((_node, _argv, options) => {
       const env = (options as { env?: NodeJS.ProcessEnv }).env;
@@ -3316,7 +3391,7 @@ describe("update-cli", () => {
         },
       },
     } as OpenClawConfig;
-    vi.mocked(readConfigFileSnapshot).mockResolvedValue(configSnapshot(preUpdateConfig));
+    vi.mocked(readConfigFileSnapshot).mockResolvedValue(await writeConfigFixture(preUpdateConfig));
     const pluginInstallRecords = {
       msteams: {
         source: "npm",
@@ -7104,9 +7179,19 @@ describe("update-cli", () => {
     expect(packageInstallCommandCall()?.[0]).toBeUndefined();
   });
 
-  it("warns but still runs package updates when disk space looks low", async () => {
-    await mockPackageInstallAtCaseDir();
+  it("refuses low-capacity activation while preserving live files and deliberate backups", async () => {
+    const packageRoot = await mockPackageInstallAtCaseDir();
     mockCurrentProcessFreshDoctor();
+    const previousBackup = path.join(profileStateDir(), "backups", "manual-backup.tar.gz");
+    await fs.mkdir(path.dirname(previousBackup), { recursive: true });
+    await fs.writeFile(previousBackup, "deliberately retained backup fixture\n");
+    const liveFiles = [
+      path.join(packageRoot, "package.json"),
+      path.join(packageRoot, "dist", "index.js"),
+      resolveConfigPath(),
+      previousBackup,
+    ];
+    const previousContents = await Promise.all(liveFiles.map((file) => fs.readFile(file)));
     vi.spyOn(fsSync, "statfsSync").mockReturnValue(
       statfsFixture({
         bavail: 256,
@@ -7114,7 +7199,7 @@ describe("update-cli", () => {
       }),
     );
 
-    await updateCommand({ yes: true });
+    await expect(updateCommand({ yes: true })).rejects.toEqual(new ExitError(1));
 
     expectPackageInstallSpec("openclaw@9999.0.0");
     const preflightParams = vi
@@ -7130,6 +7215,11 @@ describe("update-cli", () => {
     expect(packageInstallCommandCall()?.[1].env).toBe(preflightParams?.env);
     expect(defaultRuntime.exit).not.toHaveBeenCalledWith(1);
     expect(getLogOutput()).toContain("Low disk space near");
+    expect(getErrorOutput()).toContain("Insufficient update recovery capacity");
+    expect(await Promise.all(liveFiles.map((file) => fs.readFile(file)))).toEqual(previousContents);
+    await expect(fs.access(`${profileStateDir()}.update-captures`)).rejects.toMatchObject({
+      code: "ENOENT",
+    });
   });
 
   const packageUpdateInGatewayMessage = [
@@ -8963,7 +9053,10 @@ describe("update-cli", () => {
     mockNpmGlobalRoot(nodeModules);
 
     await withEnvAsync({ OPENCLAW_HOME: path.join(tempDir, "relocated-home") }, async () => {
-      await updateCommand({ yes: true });
+      await useFileBackedConfig();
+      await updateCommand({ yes: true }).catch((error: unknown) => {
+        throw new Error(getErrorOutput(), { cause: error });
+      });
     });
     platformSpy.mockRestore();
 
