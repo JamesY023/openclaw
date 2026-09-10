@@ -18,6 +18,8 @@ Forwarded host environment values reach setup, so whatever setup derives from th
 
 For a Gateway worktree project with a Git commit, capture happens during provisioning, before node enrollment. After profile setup, OpenClaw prepares a pristine checkout of the admitted commit and, when the dispatch caller authorizes setup, runs its committed executable `.openclaw/worktree-setup.sh` at the final workspace and `HOME` paths. It installs the verified node runtime and captures the completed environment when an image is needed. An explicit setup skip uses a separate prepared cache; without setup authority, an executable recipe keeps the existing Git-seed path. The first dispatch includes that work; subsequent sessions can reuse the image without waiting for the first session to stop. Session edits, eligible untracked files, and node enrollment credentials arrive only after capture. Public repository-only sessions use the same preparation flow without cloning on the Gateway: OpenClaw resolves the repository instance, commit, and executable setup recipe through GitHub, then fetches that exact commit on the worker without credentials. Initially verified private repositories keep the existing cold repository checkout after enrollment and do not create prepared repository reserves. Private prepared reuse requires a separate credential-cleanup ownership design.
 
+Local project preparation retains the primary Git repository as its transport source, including a bare primary repository backing a linked checkout. It keeps the admitted session commit pinned, so archiving and removing the linked session checkout does not prevent reserve refill or select the primary checkout's newer `HEAD`. Session-file synchronization still uses the session checkout.
+
 Project images also retain one verified compressed worker archive in the installed runtime package, outside node identity and session state. A matching new node uses those bytes instead of downloading the worker archive again. It still enrolls normally and extracts and validates its own installation. OpenClaw worker turns prewarm the worker runtime on capable nodes; Codex remote execution skips that unused startup. If the Gateway requests a different archive, the node uses the normal authenticated download; a present but corrupt or unsafe prepared archive fails installation visibly. Preparing a replacement archive removes the superseded published archive before capture. The slim node runtime archive does not include the standalone worker payload.
 
 Daytona requires a stopped source for filesystem snapshots. OpenClaw allows Crabbox to stop the scrubbed worker for capture. A successful capture waits for snapshot completion and restores a previously running source before project enrollment continues.
@@ -230,7 +232,7 @@ checkpoint details (`checkpointId`, `createdAtMs`, and recorded `baseCommit` and
 with no retained previous generation; no state migration is needed for them.
 `profileId` means the configured profile that most recently allocated from the
 image key; it is overwritten on each allocation and does not change image keys
-or reuse policy. `projectRoot` is the Gateway-local checkout root used for rebuilding.
+or reuse policy. `projectRoot` is the canonical Gateway-local repository root used for rebuilding.
 Project labels use the normalized origin repository identity
 `host/owner/repo`, or the project root's basename when origin cannot be resolved.
 
