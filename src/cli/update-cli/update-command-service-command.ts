@@ -1,6 +1,7 @@
 import { safeParseJsonRecord } from "@openclaw/normalization-core/json-coercion";
 import { resolveGatewayInstallEntrypoint } from "../../daemon/gateway-entrypoint.js";
 import type { UpdateRunResult } from "../../infra/update-runner.js";
+import { retireCommandProcessJobForHandoff } from "../../process/exec-spawn.js";
 import { runCommandWithTimeout } from "../../process/exec.js";
 import { runDaemonInstall } from "../daemon-cli/install.js";
 import { resolveNodeRunner, type UpdateCommandOptions } from "./shared.js";
@@ -63,6 +64,10 @@ export async function runUpdatedInstallGatewayCommand(
     params.assertCurrent?.();
   };
   assertCurrent();
+  if (action !== "stop") {
+    await retireCommandProcessJobForHandoff();
+    assertCurrent();
+  }
   const installing = action === "install";
   const entrypoint = await resolveGatewayInstallEntrypoint(params.result.root);
   assertCurrent();

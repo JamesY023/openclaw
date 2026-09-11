@@ -7,6 +7,7 @@ import {
   getWindowsCmdExePath,
   getWindowsPowerShellExePath,
 } from "../infra/windows-install-roots.js";
+import { retireCommandProcessJobForHandoff } from "../process/exec-spawn.js";
 import { spawnWithFallback } from "../process/spawn-utils.js";
 import { sleep } from "../utils.js";
 import { resolveGatewayServiceProbeHosts } from "./gateway-service-probe-hosts.js";
@@ -145,6 +146,7 @@ export async function launchFallbackTaskScript(
       command.environment?.OPENCLAW_SERVICE_KIND === "gateway"
         ? [...command.programArguments, WINDOWS_TASK_SUPERVISOR_FLAG]
         : command.programArguments;
+    await retireCommandProcessJobForHandoff();
     const { child } = await spawnWithFallback({
       assertCurrent,
       argv: programArguments,
@@ -185,6 +187,7 @@ export async function launchFallbackTaskScript(
   if (scriptProbe.status !== 0) {
     throw Object.assign(new Error("Windows login item script is not readable"), { code: "EACCES" });
   }
+  await retireCommandProcessJobForHandoff();
   const { child } = await spawnWithFallback({
     assertCurrent,
     // Node's verbatim /s shell contract preserves inner quotes; percent expansion is nonrecursive.

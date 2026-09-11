@@ -10,6 +10,8 @@ import { openNodeSqliteDatabase } from "../../infra/node-sqlite.js";
 import * as temporaryState from "../../infra/tmp-openclaw-dir.js";
 import { createUpdateRun } from "../../infra/update-run-ledger.js";
 import { closeOpenClawStateDatabaseForTest } from "../../state/openclaw-state-db.js";
+import { withOpenClawTestState } from "../../test-utils/openclaw-test-state.js";
+import { persistRequestedUpdateChannel } from "./update-command-config.js";
 import { withUpdateCommandExecutor } from "./update-command-executor.js";
 
 const dirs = useAutoCleanupTempDirTracker(afterEach);
@@ -134,5 +136,36 @@ it.each([
     if (included && process.platform !== "win32") {
       expect((await fs.stat(path.dirname(includePath))).mode & 0o7777).toBe(0o3700);
     }
+  },
+);
+
+it.each([false, true])(
+  "admits update capture before a requested channel write (changed=%s)",
+  async (changed) => {
+    await withOpenClawTestState({ layout: "state-only", scenario: "minimal" }, async (state) => {
+      await state.writeConfig({ update: { channel: "stable" }, plugins: { enabled: false } });
+      const configSnapshot = await createConfigIO({
+        env: state.env,
+        pluginValidation: "skip",
+        observe: false,
+      }).readConfigFileSnapshot();
+      const original = await fs.readFile(state.configPath, "utf8");
+      const admit = vi.fn(async () => {
+        throw new Error("capture admission refused");
+      });
+      const operation = persistRequestedUpdateChannel({
+        configSnapshot,
+        requestedChannel: changed ? "beta" : "stable",
+        beforePersistentEffect: admit,
+      });
+      if (changed) {
+        await expect(operation).rejects.toThrow("capture admission refused");
+        expect(admit).toHaveBeenCalledOnce();
+      } else {
+        await operation;
+        expect(admit).not.toHaveBeenCalled();
+      }
+      expect(await fs.readFile(state.configPath, "utf8")).toBe(original);
+    });
   },
 );

@@ -54,7 +54,6 @@ import {
 import {
   captureOwnedManagedUpdateContext,
   revalidateUpdateDatabaseContext,
-  withOwnedManagedUpdateEnv,
   type OwnedManagedUpdateContext,
 } from "./update-command-managed-context.js";
 import {
@@ -64,6 +63,7 @@ import {
 import { assertUpdateCommandRecovery } from "./update-command-recovery.js";
 import { runUpdateCommandRepair } from "./update-command-repair.js";
 import type { MutableUpdateExecutionResult } from "./update-command-result.js";
+import { withOwnedManagedUpdateEnv } from "./update-command-service-env.js";
 import {
   GatewayServiceUpdateOwnershipError,
   gatewayServiceCommandUsesRoot,
@@ -140,6 +140,7 @@ export async function executeMutableUpdate(
   };
   let recoveryEnv: NodeJS.ProcessEnv | undefined;
   let packageTransaction: PackageUpdateTransaction | undefined;
+  let unchangedCore: MutableUpdateExecutionResult["unchangedCore"];
   let updateRecoveryBackup: UpdateRecoveryBackupRef | undefined;
   const doctorEnv = () => ownedManagedUpdateContext?.env ?? opts.run?.env ?? process.env;
   let schemaVersions: Awaited<ReturnType<typeof readUpdateStateSchemaVersions>> | undefined;
@@ -609,6 +610,9 @@ export async function executeMutableUpdate(
         onTransaction: (transaction) => {
           packageTransaction = transaction;
         },
+        onUnchangedCore: (core) => {
+          unchangedCore = core;
+        },
         onConfigSnapshot,
         // Foreign inspection metadata cannot authorize backup or Doctor writes.
         getManagedServiceEnv: doctorEnv,
@@ -694,6 +698,7 @@ export async function executeMutableUpdate(
     ownedManagedUpdateContext,
     recoveryEnv,
     packageTransaction,
+    unchangedCore,
     updateRecoveryBackup,
     schemaVersions,
     candidateSchemaVersions,

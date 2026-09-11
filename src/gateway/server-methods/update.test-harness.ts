@@ -1,11 +1,13 @@
 import { spawn } from "node:child_process";
 import fs from "node:fs/promises";
 import path from "node:path";
+import { expectDefined } from "@openclaw/normalization-core";
 import { afterEach, beforeAll, beforeEach, expect, vi } from "vitest";
 import type { ConfigFileSnapshot, OpenClawConfig } from "../../config/types.openclaw.js";
 import type { RestartSentinelPayload } from "../../infra/restart-sentinel.js";
 import type { RespawnSupervisor } from "../../infra/supervisor-markers.js";
 import type { UpdateChannel } from "../../infra/update-channels.js";
+import { getUpdateRun } from "../../infra/update-run-ledger.js";
 import { createTempHomeEnv, type TempHomeEnv } from "../../test-utils/temp-home.js";
 
 let ledgerHome: TempHomeEnv | undefined;
@@ -86,6 +88,9 @@ export async function withTransferredUpdateHandoff(
   const activatePath = path.join(root, "activate");
   const updatedPath = path.join(root, "updated");
   const updaterPath = path.join(root, "updater.cjs");
+  const noticePath = path.join(root, "notice-committed");
+  const stoppedPath = path.join(root, "native-stopped");
+  const binDir = path.join(root, "bin");
   await fs.writeFile(
     updaterPath,
     `
@@ -113,31 +118,80 @@ export async function withTransferredUpdateHandoff(
     stdio: ["pipe", "ignore", "ignore"],
   });
   let helper: Awaited<ReturnType<typeof handoff.startManagedServiceUpdateHandoff>> | undefined;
-  startManagedServiceUpdateHandoffMock.mockImplementationOnce(async (params) => {
-    helper = await handoff.startManagedServiceUpdateHandoff({
-      ...params,
-      root,
-      supervisor: null,
-      parentPid: parent.pid,
-      execPath: process.execPath,
-      argv1: updaterPath,
-      runId: undefined,
-      meta: {},
-      beforePark: async () => {
-        await params.beforePark?.();
-        await onNotice(params.runId!);
-        expect(parent.exitCode).toBeNull();
-        parent.stdin?.end();
-      },
-    });
-    return helper;
-  });
-  transferManagedServiceUpdateHandoffMock.mockImplementationOnce(
-    handoff.transferManagedServiceUpdateHandoff,
-  );
   try {
+    const nativeCommandPath = path.join(root, "native-command.cjs");
+    await fs.mkdir(binDir, { recursive: true });
+    await fs.writeFile(
+      nativeCommandPath,
+      `
+    const fs = require("node:fs");
+    const action = process.platform === "win32"
+      ? require("node:path").basename(process.argv[1]) : process.argv[2];
+    if (action === "print") {
+      if (fs.existsSync(${JSON.stringify(stoppedPath)})) {
+        process.stderr.write("Could not find service\\n");
+        process.exit(113);
+      }
+      process.kill(${parent.pid}, 0);
+      process.stdout.write("pid = ${parent.pid}\\n");
+    } else if (action === "disable") {
+      process.kill(${parent.pid}, 0);
+    } else if (action === "bootout") {
+      if (!fs.existsSync(${JSON.stringify(noticePath)})) throw new Error("Native stop preceded the persisted notice");
+      fs.writeFileSync(${JSON.stringify(stoppedPath)}, "stopped");
+      process.kill(${parent.pid}, "SIGTERM");
+    } else {
+      throw new Error("Unexpected native command: " + action);
+    }
+  `,
+    );
+    if (process.platform === "win32") {
+      // Native spawn cannot execute .cmd; Node runs fixed action files in the helper cwd.
+      await fs.copyFile(process.execPath, path.join(binDir, "launchctl.exe"));
+    } else {
+      await fs.writeFile(
+        path.join(binDir, "launchctl"),
+        `#!${process.execPath}\nrequire(${JSON.stringify(nativeCommandPath)});\n`,
+        { mode: 0o700 },
+      );
+    }
+    startManagedServiceUpdateHandoffMock.mockImplementationOnce(async (params) => {
+      helper = await handoff.startManagedServiceUpdateHandoff({
+        ...params,
+        root,
+        supervisor: "launchd",
+        env: { ...process.env, PATH: `${binDir}${path.delimiter}${process.env.PATH ?? ""}` },
+        parentPid: parent.pid,
+        execPath: process.execPath,
+        argv1: updaterPath,
+        runId: undefined,
+        meta: {},
+        beforePark: async () => {
+          await params.beforePark?.();
+          await onNotice(params.runId!);
+          expect(parent.exitCode).toBeNull();
+          await fs.writeFile(noticePath, "committed");
+        },
+      });
+      if (process.platform === "win32") {
+        for (const action of ["print", "disable", "bootout"]) {
+          await fs.writeFile(
+            path.join(path.dirname(helper.logPath), action),
+            `require(${JSON.stringify(nativeCommandPath)});\n`,
+          );
+        }
+      }
+      return helper;
+    });
+    transferManagedServiceUpdateHandoffMock.mockImplementationOnce(
+      handoff.transferManagedServiceUpdateHandoff,
+    );
     await run(() => fs.writeFile(activatePath, "activate"));
     await vi.waitFor(() => fs.access(updatedPath), { timeout: 5_000 });
+    expect(await fs.readFile(stoppedPath, "utf8")).toBe("stopped");
+  } catch (error) {
+    const log = helper ? await fs.readFile(helper.logPath, "utf8") : "Helper did not start";
+    throw new Error(`Managed handoff fixture failed: ${log}`, { cause: error });
   } finally {
     parent.stdin?.end();
     if (helper?.pid) {
@@ -412,3 +466,46 @@ beforeEach(() => {
     reason: "not-git-update",
   });
 });
+
+export async function invokeUpdateRun(
+  params: Record<string, unknown>,
+  respond?: (ok: boolean, response?: unknown) => void,
+  runtimeConfig: OpenClawConfig = { update: {} },
+) {
+  const { updateHandlers } = await import("./update.js");
+  const onRespond = respond ?? (() => {});
+  await expectDefined(
+    updateHandlers["update.run"],
+    'updateHandlers["update.run"] test invariant',
+  )({
+    params,
+    respond: onRespond as never,
+    context: { getRuntimeConfig: () => runtimeConfig },
+  } as never);
+}
+
+export async function captureUpdateRunPayload(
+  params: Record<string, unknown> = {},
+  runtimeConfig?: OpenClawConfig,
+): Promise<UpdateRunPayload | undefined> {
+  let payload: UpdateRunPayload | undefined;
+  await invokeUpdateRun(
+    params,
+    (_ok: boolean, response: unknown) => {
+      payload = response as UpdateRunPayload;
+    },
+    runtimeConfig,
+  );
+  if (
+    payload?.result?.status &&
+    payload.result.status !== "ok" &&
+    payload.handoff?.status !== "started"
+  ) {
+    expect(getUpdateRun(payload.runId)).toMatchObject({
+      status: payload.result.status === "skipped" ? "skipped" : "failed",
+      phase: "finished",
+      reason: payload.result.reason,
+    });
+  }
+  return payload;
+}

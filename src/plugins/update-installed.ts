@@ -109,7 +109,10 @@ export async function updateNpmInstalledPlugins(params: {
   packagePluginIds?: Readonly<Record<string, readonly string[]>>;
 }): Promise<PluginUpdateSummary> {
   const logger = params.logger ?? {};
-  const consentCallbacks = capturePluginCapabilityConsentHandlerErrors(params.onCapabilityConsent);
+  const consentCallbacks = capturePluginCapabilityConsentHandlerErrors(
+    params.onCapabilityConsent,
+    params.beforePersistentEffect,
+  );
   const installs = params.config.plugins?.installs ?? {};
   const targets = new Set(params.pluginIds?.length ? params.pluginIds : Object.keys(installs));
   const normalizedPluginConfig = params.skipDisabledPlugins
@@ -342,7 +345,13 @@ export async function updateNpmInstalledPlugins(params: {
       continue;
     }
     if (!params.dryRun && record.source === "npm" && currentVersion) {
-      changed = (await repairRegisteredOpenClawHostLink({ pluginId, record, logger })) || changed;
+      changed =
+        (await repairRegisteredOpenClawHostLink({
+          pluginId,
+          record,
+          logger,
+          beforePersistentEffect: consentCallbacks.beforePersistentEffect,
+        })) || changed;
     }
     // Payload validation is filesystem work needed only to preserve state after metadata failures.
     // Every failure path below ends this plugin iteration, so the result cannot be reused.
@@ -470,7 +479,7 @@ export async function updateNpmInstalledPlugins(params: {
       packagePluginIds: params.packagePluginIds?.[pluginId],
       expectedIntegrity,
       onCapabilityConsent: consentCallbacks.onCapabilityConsent,
-      beforePersistentEffect: params.beforePersistentEffect,
+      beforePersistentEffect: consentCallbacks.beforePersistentEffect,
     });
     const runAttempt = () =>
       runPluginUpdateAttempt(
@@ -498,6 +507,7 @@ export async function updateNpmInstalledPlugins(params: {
       clawhubPackage: recordClawHubPackage,
       dryRun: params.dryRun === true,
       run: runAttempt,
+      beforePersistentEffect: consentCallbacks.beforePersistentEffect,
     });
     consentCallbacks.rethrowCallbackError();
     if (attempt.kind === "exception") {
@@ -693,5 +703,6 @@ export async function updateNpmInstalledPlugins(params: {
     ranNpmInstaller,
     logger,
     transactionState,
+    beforePersistentEffect: consentCallbacks.beforePersistentEffect,
   });
 }

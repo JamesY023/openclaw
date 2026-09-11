@@ -50,7 +50,6 @@ import { readUpdateChannelConfig } from "./update-command-config.js";
 import { printUpdateDryRun } from "./update-command-dry-run.js";
 import type { UpdateCommandExecutor } from "./update-command-executor.js";
 import { withUpdateCommandExecutor } from "./update-command-executor.js";
-import { withOwnedManagedUpdateEnv } from "./update-command-managed-context.js";
 import {
   reportPreMutationUpdateFailure,
   UpdateCommandFailure,
@@ -65,7 +64,11 @@ import {
   withUpdatePreviewSignals,
 } from "./update-command-run.js";
 import { preflightUpdateCommandSchemas } from "./update-command-schema.js";
-import { resolveServiceRefreshEnv, withUpdateInProgressEnv } from "./update-command-service-env.js";
+import {
+  resolveServiceRefreshEnv,
+  withUpdateInProgressEnv,
+  withOwnedManagedUpdateEnv,
+} from "./update-command-service-env.js";
 import {
   gatewayServiceCommandUsesRoot,
   resolveManagedServicePackageUpdatePlan,
@@ -185,8 +188,7 @@ async function updateCommandInternal(
     });
 
   if (requestedChannel === "extended-stable" && installKind === "git") {
-    await refuseUpdate("unsupported_git_channel");
-    return;
+    return await refuseUpdate("unsupported_git_channel");
   }
 
   const { configSnapshot, legacyConfigPlan, storedChannel } = await readUpdateChannelConfig(
@@ -717,9 +719,13 @@ async function updateCommandInternal(
         env: ownedManagedUpdateContext?.env ?? run.env,
       });
   run.executorFence?.assertCurrent();
-  if (opts.recovery || rollbackBlockedReason) {
-    // A migrated database belongs to the candidate runtime. The old process
-    // must not reopen it, including during error reporting or outer cleanup.
+  if (
+    opts.recovery ||
+    rollbackBlockedReason ||
+    (finalization.updateRecoveryBackup && finalization.candidateUpdateRecovery === "parent-v1")
+  ) {
+    // The target runtime owns protected convergence even when schemas did not change.
+    // The parent retains capture restoration until that mutating child has settled.
     recoveryState.ledgerHandoffOwned = true;
     const continued = await continueMigratedUpdateInFreshProcess(
       { ...finalization, rollbackBlockedReason },
