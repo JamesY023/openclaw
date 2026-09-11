@@ -7,12 +7,10 @@ import { isPathWithin } from "../commands/cleanup-utils.js";
 import { resolveGatewayLockDir } from "../config/paths.js";
 import { normalizeAgentId } from "../routing/session-key.js";
 import { assertOpenClawAgentDatabaseOwner } from "../state/openclaw-agent-db-maintenance.js";
+import { clearOpenClawStateCopyLeases } from "../state/openclaw-state-copy-leases.js";
 import { assertOpenClawStateDatabaseOwner } from "../state/openclaw-state-db-maintenance.js";
 import { resolveOpenClawStateSqlitePath } from "../state/openclaw-state-db.paths.js";
-import {
-  sanitizeOpenClawGlobalStateSnapshot,
-  sanitizeOpenClawStateLeaseRows,
-} from "../state/openclaw-state-snapshot-sanitizer.js";
+import { sanitizeOpenClawGlobalStateSnapshot } from "../state/openclaw-state-snapshot-sanitizer.js";
 import { isTransientSqliteBackupPath } from "./backup-volatile-filter.js";
 import { hasErrnoCode } from "./errno.js";
 import { collectErrorGraphCandidates, formatErrorMessage } from "./errors.js";
@@ -357,7 +355,7 @@ export async function createBackupSqliteSnapshotPlan(params: {
                 rewriteLegacyAuditBackupCheckpoints(database, params.legacyAuditSnapshots);
               }
             : canonicalSource?.role === "agent"
-              ? sanitizeOpenClawStateLeaseRows
+              ? clearOpenClawStateCopyLeases
               : undefined,
       });
     } catch (error) {
