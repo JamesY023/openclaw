@@ -442,7 +442,7 @@ export async function resetPreparedModelRuntimeHarness(state: OpenClawTestState)
     }));
   preparedModelRuntimeMocks.loadAgentRuntimePluginRegistryHandle
     .mockReset()
-    .mockReturnValue(createEmptyPluginRegistry());
+    .mockImplementation(() => createEmptyPluginRegistry());
   preparedModelRuntimeMocks.loadStaticCatalog.mockReset().mockResolvedValue([]);
   preparedModelRuntimeMocks.planOpenClawModelsJsonSource
     .mockReset()

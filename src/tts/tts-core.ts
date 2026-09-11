@@ -199,7 +199,7 @@ export async function summarizeText(
       modelId: ref.model,
     });
     if (!("error" in prepared)) {
-      onAcquired(prepared);
+      onAcquired({ release: async () => await prepared[Symbol.asyncDispose]() });
     }
     return await completeSummary(prepared, ref.provider, resolvedDeps);
   });

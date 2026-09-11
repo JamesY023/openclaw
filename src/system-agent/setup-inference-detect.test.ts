@@ -8,7 +8,7 @@ import { detectSetupInference } from "./setup-inference-detect.js";
 
 const fixture = vi.hoisted(() => ({
   currentSavedCandidate: vi.fn(),
-  loadProviderAuthMethod: vi.fn(),
+  withSetupProviderAuthMethod: vi.fn(),
 }));
 
 vi.mock("../config/config.js", async (importOriginal) => ({
@@ -99,7 +99,7 @@ beforeEach(() => {
     candidate: { modelRef: "fixture/saved-model" },
     choice,
   });
-  fixture.loadProviderAuthMethod.mockReset();
+  fixture.withSetupProviderAuthMethod.mockReset();
 });
 
 afterEach(() => {
@@ -144,7 +144,7 @@ describe("setup inference discovery deadline", () => {
   it("keeps manual setup available when loading a saved sign-in stalls", async () => {
     const loading = createDeferred();
     fixture.currentSavedCandidate.mockReturnValue(undefined);
-    fixture.loadProviderAuthMethod.mockImplementation(() => {
+    fixture.withSetupProviderAuthMethod.mockImplementation(() => {
       loading.resolve();
       return new Promise(() => {});
     });

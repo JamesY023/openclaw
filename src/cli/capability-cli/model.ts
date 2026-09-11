@@ -285,7 +285,7 @@ async function runModelRun(params: {
         callerResult.reject(error);
       } finally {
         await work.drain();
-        prepared.release();
+        await prepared[Symbol.asyncDispose]();
       }
     }).catch((error: unknown) => callerResult.reject(error));
     return await callerResult.promise;

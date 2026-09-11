@@ -162,7 +162,7 @@ describe("prepared model runtime cancelled admission ownership", () => {
     expect(mocks.prepareStaticCatalog).toHaveBeenCalledOnce();
     expect(testApi.getPreparedModelRuntimeOwnerCountForTest()).toBe(1);
 
-    lease.release();
+    await lease[Symbol.asyncDispose]();
     expect(testApi.getPreparedModelRuntimeOwnerCountForTest()).toBe(0);
   });
 
@@ -191,7 +191,7 @@ describe("prepared model runtime cancelled admission ownership", () => {
     secondBuild.release.resolve();
     const lease = await replacement;
     expect(testApi.getPreparedModelRuntimeOwnerCountForTest()).toBe(1);
-    lease.release();
+    await lease[Symbol.asyncDispose]();
     expect(testApi.getPreparedModelRuntimeOwnerCountForTest()).toBe(0);
   });
 
@@ -220,7 +220,7 @@ describe("prepared model runtime cancelled admission ownership", () => {
     const lease = await survivor;
     expect(mocks.prepareStaticCatalog).toHaveBeenCalledTimes(2);
 
-    lease.release();
+    await lease[Symbol.asyncDispose]();
     expect(testApi.getPreparedModelRuntimeOwnerCountForTest()).toBe(0);
   });
 
@@ -254,7 +254,7 @@ describe("prepared model runtime cancelled admission ownership", () => {
     expect(mocks.prepareStaticCatalog).toHaveBeenCalledTimes(2);
     expect(testApi.getPreparedModelRuntimeOwnerCountForTest()).toBe(2);
 
-    retainedLease.release();
+    await retainedLease[Symbol.asyncDispose]();
     expect(testApi.getPreparedModelRuntimeOwnerCountForTest()).toBe(2);
 
     await refreshPreparedModelRuntimeSnapshots(config, {
@@ -341,14 +341,14 @@ describe("prepared model runtime cancelled admission ownership", () => {
       const next = await acquireAgentRunPreparedModelRuntime(input, { retainIdleRunOwner: true });
       try {
         expect(next.snapshot).not.toBe(previous.snapshot);
-        previous.release();
+        await previous[Symbol.asyncDispose]();
         expect(getPreparedModelRuntimeSnapshot(input)).toBe(next.snapshot);
         expect(next.snapshot.isCurrent()).toBe(true);
       } finally {
-        next.release();
+        await next[Symbol.asyncDispose]();
       }
     } finally {
-      previous.release();
+      await previous[Symbol.asyncDispose]();
     }
   });
 
