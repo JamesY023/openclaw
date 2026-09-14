@@ -4,6 +4,10 @@ import { normalizeStringEntries } from "@openclaw/normalization-core/string-norm
 import { resolveAgentConfig } from "../../agents/agent-scope.js";
 import { getChannelPlugin, normalizeChannelId } from "../../channels/plugins/index.js";
 import type { AgentElevatedAllowFromConfig, OpenClawConfig } from "../../config/config.js";
+import {
+  getCommandSenderAuthority,
+  hasCommandSenderAuthority,
+} from "../command-sender-authority.js";
 import { shouldUseFromAsSenderFallback } from "../sender-identity.js";
 import type { MsgContext } from "../templating.js";
 import {
@@ -62,6 +66,14 @@ function isApprovedElevatedSender(params: {
   allowFrom?: AgentElevatedAllowFromConfig;
   fallbackAllowFrom?: Array<string | number>;
 }): boolean {
+  const hasAuthority = hasCommandSenderAuthority(params.ctx);
+  const ctx: MsgContext = hasAuthority
+    ? { SenderId: getCommandSenderAuthority(params.ctx)?.() }
+    : params.ctx;
+  if (hasAuthority && !ctx.SenderId) {
+    return false;
+  }
+
   const rawAllow = resolveElevatedAllowList(
     params.allowFrom,
     params.provider,
@@ -82,9 +94,9 @@ function isApprovedElevatedSender(params: {
   const senderIdTokens = new Set<string>();
   const senderFromTokens = new Set<string>();
   const senderE164Tokens = new Set<string>();
-  const senderId = normalizeOptionalString(params.ctx.SenderId);
-  const senderFrom = normalizeOptionalString(params.ctx.From);
-  const senderE164 = normalizeOptionalString(params.ctx.SenderE164);
+  const senderId = normalizeOptionalString(ctx.SenderId);
+  const senderFrom = normalizeOptionalString(ctx.From);
+  const senderE164 = normalizeOptionalString(ctx.SenderE164);
 
   if (senderId) {
     addFormattedTokens({
@@ -95,10 +107,7 @@ function isApprovedElevatedSender(params: {
       tokens: senderIdTokens,
     });
   }
-  if (
-    senderFrom &&
-    shouldUseFromAsSenderFallback({ from: senderFrom, chatType: params.ctx.ChatType })
-  ) {
+  if (senderFrom && shouldUseFromAsSenderFallback({ from: senderFrom, chatType: ctx.ChatType })) {
     addFormattedTokens({
       formatAllowFrom: params.formatAllowFrom,
       values: [senderFrom, stripSenderPrefix(senderFrom)].filter((value): value is string =>
@@ -121,9 +130,9 @@ function isApprovedElevatedSender(params: {
   ]);
 
   // Identity fields use channel formatting; mutable labels use normalized text matching.
-  const senderNameTokens = buildMutableTokens(params.ctx.SenderName);
-  const senderUsernameTokens = buildMutableTokens(params.ctx.SenderUsername);
-  const senderTagTokens = buildMutableTokens(params.ctx.SenderTag);
+  const senderNameTokens = buildMutableTokens(ctx.SenderName);
+  const senderUsernameTokens = buildMutableTokens(ctx.SenderUsername);
+  const senderTagTokens = buildMutableTokens(ctx.SenderTag);
 
   const explicitFieldMatchers: Record<ExplicitElevatedAllowField, (value: string) => boolean> = {
     id: (value) =>

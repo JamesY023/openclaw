@@ -1,6 +1,8 @@
 // Tests elevated permission resolution from allowlists and message context.
 import { describe, expect, it } from "vitest";
 import type { OpenClawConfig } from "../../config/config.js";
+import { resolveChatSendCallerContext } from "../../gateway/server-methods/gateway-client-identity.js";
+import type { GatewayClient } from "../../gateway/server-methods/types.js";
 import type { MsgContext } from "../templating.js";
 import { resolveElevatedPermissions } from "./reply-elevated.js";
 
@@ -116,5 +118,87 @@ describe("resolveElevatedPermissions", () => {
         SenderUsername: "owner_username",
       },
     });
+  });
+});
+
+// Finding: authorization | high | src/auto-reply/reply/reply-elevated.ts:90
+describe("Gateway elevated sender authority", () => {
+  function client(): GatewayClient {
+    return {
+      authenticatedUserId: "owner@example.test",
+      authenticatedUserProfile: {
+        profileId: "gateway-owner",
+        displayName: "Owner",
+        hasAvatar: false,
+        updatedAt: 1,
+      },
+      connect: {
+        minProtocol: 1,
+        maxProtocol: 1,
+        client: { id: "openclaw-control-ui", version: "test", platform: "test", mode: "webchat" },
+        role: "operator",
+        scopes: ["operator.admin"],
+      },
+    };
+  }
+  const config: OpenClawConfig = {
+    tools: { elevated: { enabled: true, allowFrom: { webchat: ["id:gateway-owner"] } } },
+  };
+  const resolve = (ctx: MsgContext, cfg = config) =>
+    resolveElevatedPermissions({ cfg, agentId: "main", provider: "webchat", ctx });
+
+  it("matches the live verified profile without restoring UI sender attribution", () => {
+    const ctx = resolveChatSendCallerContext(client());
+    expect(ctx).not.toHaveProperty("SenderId");
+    expect(resolve({ ...ctx })).toEqual({ enabled: true, allowed: true, failures: [] });
+  });
+
+  it.each(["revoked", "aborted", "synthetic", "unverified", "other-profile"])(
+    "rejects %s authority despite spoofed sender fields",
+    (state) => {
+      const connection = client();
+      const lifetime = new AbortController();
+      connection.connectionSignal = lifetime.signal;
+      if (state === "synthetic") {
+        connection.internal = { syntheticClient: true };
+      }
+      const ctx = resolveChatSendCallerContext(connection);
+      if (state === "revoked") {
+        connection.invalidated = true;
+      }
+      if (state === "aborted") {
+        lifetime.abort();
+      }
+      if (state === "unverified") {
+        connection.authenticatedUserId = undefined;
+      }
+      if (state === "other-profile") {
+        connection.authenticatedUserProfile!.profileId = "other";
+      }
+      expect(
+        resolve({
+          ...ctx,
+          SenderId: "gateway-owner",
+          From: "gateway-owner",
+          SenderE164: "gateway-owner",
+        }).allowed,
+      ).toBe(false);
+    },
+  );
+
+  it.each([
+    {
+      ...config,
+      tools: { elevated: { enabled: false, allowFrom: { webchat: ["id:gateway-owner"] } } },
+    },
+    { ...config, agents: { entries: { main: { tools: { elevated: { enabled: false } } } } } },
+    {
+      ...config,
+      agents: {
+        entries: { main: { tools: { elevated: { allowFrom: { webchat: ["id:other"] } } } } },
+      },
+    },
+  ])("retains configured global and agent restrictions (%j)", (cfg) => {
+    expect(resolve(resolveChatSendCallerContext(client()), cfg).allowed).toBe(false);
   });
 });

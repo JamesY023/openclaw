@@ -17,3 +17,8 @@ export function getCommandSenderAuthority(
   // SAFETY: Only this module-private symbol's typed producer supplies the resolver.
   return (context as CommandSenderContext | null | undefined)?.[COMMAND_SENDER_AUTHORITY];
 }
+
+/** Distinguish ordinary channel input from an explicitly denied Gateway binding. */
+export function hasCommandSenderAuthority(context: object): boolean {
+  return Object.hasOwn(context, COMMAND_SENDER_AUTHORITY);
+}
