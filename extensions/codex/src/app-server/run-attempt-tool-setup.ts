@@ -152,6 +152,7 @@ export async function prepareCodexAttemptTools(runtime: CodexAttemptRuntime) {
     frameImageIdentity?: string;
   } = { value: 0 };
   const runCleanups: Array<(reason: string) => Promise<void>> = [];
+  const inheritedToolAllowlist: string[] = [];
   const cronCreatorToolAllowlist: Array<string | { name: string; pluginId?: string }> = [];
   const cronCreatorToolAllowlistCaptureRef: {
     value?: { version: 1; source: "final-executable-surface" };
@@ -203,8 +204,9 @@ export async function prepareCodexAttemptTools(runtime: CodexAttemptRuntime) {
         runtimeAuthority?: NonNullable<EmbeddedRunAttemptParams["scheduledRuntimeAuthority"]>;
       }>
     | undefined;
+  let creatorAuthoritySequence = 0;
   let resolveCreatorAuthorityImpl:
-    | ((options?: { signal?: AbortSignal }) => Promise<{
+    | ((options?: { signal?: AbortSignal; toolsAllow?: string[] }) => Promise<{
         tools: readonly (string | { name: string; pluginId?: string })[];
         provenance: { version: 1; source: "final-executable-surface" };
         runtimeAuthority?: NonNullable<EmbeddedRunAttemptParams["scheduledRuntimeAuthority"]>;
@@ -246,11 +248,17 @@ export async function prepareCodexAttemptTools(runtime: CodexAttemptRuntime) {
     computerContextEpoch,
     ...(canResolveAnyScheduledCreatorAuthority
       ? {
-          resolveCronCreatorToolAuthority: (options?: { signal?: AbortSignal }) => {
+          resolveCronCreatorToolAuthority: (options?: {
+            signal?: AbortSignal;
+            toolsAllow?: string[];
+          }) => {
             if (!resolveCreatorAuthorityImpl) {
               throw new Error("configured MCP authority resolver was invoked before tool setup");
             }
             options?.signal?.throwIfAborted();
+            if (Array.isArray(options?.toolsAllow)) {
+              return resolveCreatorAuthorityImpl(options);
+            }
             if (creatorAuthorityPromise) {
               return creatorAuthorityPromise;
             }
@@ -305,6 +313,7 @@ export async function prepareCodexAttemptTools(runtime: CodexAttemptRuntime) {
     onMessageToolTargetResolved: (required) => {
       requireExplicitMessageTarget = required;
     },
+    inheritedToolAllowlistRef: inheritedToolAllowlist,
     cronCreatorToolAllowlistRef: cronCreatorToolAllowlist,
     cronCreatorToolAllowlistCaptureRef,
     onPersistentWebSearchPolicyResolved: (allowed) => {
@@ -526,6 +535,15 @@ export async function prepareCodexAttemptTools(runtime: CodexAttemptRuntime) {
       ),
       hookContext,
     });
+    if (inheritedToolAllowlist.length > 0) {
+      // Only restrictive parent policy populates this spawn-owned reference.
+      // Capture executable tools after Codex filtering and late MCP materialization.
+      inheritedToolAllowlist.splice(
+        0,
+        inheritedToolAllowlist.length,
+        ...new Set(toolBridge.availableTools.map((tool) => tool.name)),
+      );
+    }
     const captureCronCreatorToolAllowlist = async () => {
       await captureFinalCodexCronCreatorToolAllowlist(
         cronCreatorToolAllowlist,
@@ -576,7 +594,9 @@ export async function prepareCodexAttemptTools(runtime: CodexAttemptRuntime) {
           if (canResolveScheduledConfiguredMcpCreatorAuthority) {
             try {
               materialized = await materializeStaticMcpToolsForHarnessRun({
-                sessionId: `cron-authority:${params.runId}`,
+                sessionId: Array.isArray(options?.toolsAllow)
+                  ? `cron-authority:${params.runId}:${++creatorAuthoritySequence}`
+                  : `cron-authority:${params.runId}`,
                 agentId: sessionAgentId,
                 workspaceDir: effectiveWorkspace,
                 agentDir: policyContext.agentDir,
@@ -584,6 +604,7 @@ export async function prepareCodexAttemptTools(runtime: CodexAttemptRuntime) {
                 manifestRegistry: bundleManifestRegistry,
                 reservedToolNames: toolBridge.availableTools.map((tool) => tool.name),
                 toolsAllow: params.toolsAllow,
+                additionalToolsAllow: options?.toolsAllow,
                 toolOverrides: codexMcpToolOverrides,
                 autoApproveCodexAppServerApprovals: shouldAutoApproveCodexAppServerApprovals(
                   connection.appServer,
