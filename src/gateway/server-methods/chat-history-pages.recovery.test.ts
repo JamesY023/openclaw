@@ -5,9 +5,11 @@ import {
   replaceSessionEntry,
   replaceTranscriptEvents,
 } from "../../config/sessions/session-accessor.js";
+import { closeOpenClawAgentDatabasesForTest } from "../../state/openclaw-agent-db.js";
 import { withOpenClawTestState } from "../../test-utils/openclaw-test-state.js";
 import { readChatHistoryMessageId } from "../session-history-tail.js";
 import * as anchorReader from "../session-transcript-anchor-reader.js";
+import * as transcriptReaders from "../session-transcript-readers.js";
 import { readSessionMessagesAsync } from "../session-transcript-readers.js";
 import { readChatHistoryPage } from "./chat-history-pages.js";
 
@@ -186,4 +188,71 @@ describe("historical page recovery context", () => {
       );
     },
   );
+});
+
+describe("owned Talk historical replacement", () => {
+  const final = {
+    role: "assistant",
+    stopReason: "stop",
+    content: [{ type: "text", text: "Full answer" }],
+    __openclaw: { runId: "run-owned" },
+  };
+  const spoken = {
+    role: "assistant",
+    stopReason: "stop",
+    api: "realtime",
+    model: "realtime-voice",
+    content: [{ type: "text", text: "Full answer" }],
+    provenance: { kind: "realtime_voice", sourceChannel: "talk" },
+    __openclaw: {
+      replacesRunId: "run-owned",
+      replacesMessageId: "final-owned",
+      voiceSessionId: "voice-owned",
+      playbackId: "playback-owned",
+    },
+  };
+  it.each([
+    { offset: 1, messageId: undefined },
+    { offset: undefined, messageId: "final-owned" },
+  ])(
+    "does not resurrect the replaced final after reopen (offset=$offset, anchor=$messageId)",
+    async (options) => {
+      await withTranscript(
+        [
+          ["user", user],
+          ["final-owned", final],
+          ["voice-owned:final-owned", spoken],
+        ],
+        async ({ read, raw }) => {
+          const original = await raw();
+          closeOpenClawAgentDatabasesForTest();
+          const page = await read(options);
+          expect(page.messages.map(readChatHistoryMessageId)).not.toContain("final-owned");
+          expect(await raw()).toEqual(original);
+        },
+      );
+    },
+  );
+  it("ignores a replacement appended after the selected snapshot", async () => {
+    await withTranscript(
+      [
+        ["user", user],
+        ["final-owned", final],
+      ],
+      async ({ append, read }) => {
+        const lookup = transcriptReaders.readSessionMessageByIdAsync;
+        vi.spyOn(transcriptReaders, "readSessionMessageByIdAsync").mockImplementationOnce(
+          async (...args) => {
+            await append("voice-owned:final-owned", spoken);
+            return lookup(...args);
+          },
+        );
+        const page = await read({ offset: 0 });
+        expect(page.messages.map(readChatHistoryMessageId)).toEqual(["final-owned"]);
+        expect((await read({ offset: 0 })).messages.map(readChatHistoryMessageId)).toEqual([
+          "voice-owned:final-owned",
+        ]);
+      },
+    );
+  });
 });

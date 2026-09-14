@@ -7,6 +7,7 @@ import { describe, expect, test, vi } from "vitest";
 import { HEARTBEAT_PROMPT } from "../auto-reply/heartbeat.js";
 import { projectChatDisplayMessagesWithState } from "./chat-display-projection.js";
 import { buildSessionHistorySnapshot, SessionHistorySseState } from "./session-history-state.js";
+import { readChatHistoryMessageId } from "./session-history-tail.js";
 import * as sessionTranscriptReaders from "./session-transcript-readers.js";
 
 type HistorySnapshot = ReturnType<typeof buildSessionHistorySnapshot>;
@@ -945,5 +946,44 @@ describe("SessionHistorySseState", () => {
       }),
     ).toBeNull();
     expect(state.snapshot().messages).toHaveLength(1);
+  });
+});
+
+describe("owned Talk replacement history refresh", () => {
+  test("reloads already-emitted history when the server-owned voice row commits", () => {
+    const final = {
+      role: "assistant",
+      stopReason: "stop",
+      content: textContent("Full answer"),
+      __openclaw: { id: "final-a", seq: 1, runId: "run-a" },
+    };
+    const state = newState([final]);
+    const spoken = {
+      role: "assistant",
+      stopReason: "stop",
+      api: "realtime",
+      model: "realtime-voice",
+      content: textContent("Spoken answer"),
+      provenance: { kind: "realtime_voice", sourceChannel: "talk" },
+      __openclaw: {
+        id: "voice-owned:final-a",
+        replacesRunId: "run-a",
+        replacesMessageId: "final-a",
+        voiceSessionId: "voice-a",
+        playbackId: "playback-a",
+      },
+    };
+    expect(
+      state.appendInlineMessage({
+        message: spoken,
+        messageId: "voice-owned:final-a",
+        messageSeq: 2,
+      }),
+    ).toEqual({ shouldRefresh: true });
+    expect(
+      buildSessionHistorySnapshot({ rawMessages: [final, spoken] }).history.messages.map(
+        readChatHistoryMessageId,
+      ),
+    ).toEqual(["voice-owned:final-a"]);
   });
 });

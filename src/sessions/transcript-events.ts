@@ -58,6 +58,45 @@ export function attachSessionTranscriptRunId<T>(message: T, runId: string | null
   };
 }
 
+/** Native event namespace; public voice entries always use the separate `voice:` prefix. */
+export function ownedVoiceTranscriptEventId(terminalMessageId: string): string {
+  return `voice-owned:${terminalMessageId}`;
+}
+
+/** Read a replacement only after the transcript reader has attached its actual event ID. */
+export function readOwnedVoiceTranscriptReplacement(message: unknown):
+  | {
+      runId: string;
+      messageId: string;
+    }
+  | undefined {
+  if (
+    !isRecord(message) ||
+    message.role !== "assistant" ||
+    message.stopReason !== "stop" ||
+    message.api !== "realtime" ||
+    message.model !== "realtime-voice"
+  ) {
+    return undefined;
+  }
+  const provenance = isRecord(message.provenance) ? message.provenance : undefined;
+  const metadata = isRecord(message["__openclaw"]) ? message["__openclaw"] : undefined;
+  const runId = normalizeOptionalString(metadata?.replacesRunId);
+  const messageId = normalizeOptionalString(metadata?.replacesMessageId);
+  if (
+    !runId ||
+    !messageId ||
+    provenance?.kind !== "realtime_voice" ||
+    provenance.sourceChannel !== "talk" ||
+    metadata?.id !== ownedVoiceTranscriptEventId(messageId) ||
+    !normalizeOptionalString(metadata.voiceSessionId) ||
+    !normalizeOptionalString(metadata.playbackId)
+  ) {
+    return undefined;
+  }
+  return { runId, messageId };
+}
+
 /** Reads the run identity persisted on a transcript row, when one was attached. */
 export function readSessionTranscriptRunId(message: unknown): string | undefined {
   if (!isRecord(message)) {

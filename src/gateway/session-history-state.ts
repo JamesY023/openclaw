@@ -4,6 +4,7 @@ import { isDeepStrictEqual } from "node:util";
 import { expectDefined } from "@openclaw/normalization-core";
 import { asPositiveSafeInteger } from "@openclaw/normalization-core/number-coercion";
 import type { SessionEntry } from "../config/sessions.js";
+import { readOwnedVoiceTranscriptReplacement } from "../sessions/transcript-events.js";
 import {
   DEFAULT_CHAT_HISTORY_TEXT_MAX_CHARS,
   projectChatDisplayMessages,
@@ -324,6 +325,9 @@ export class SessionHistorySseState {
       ...(idempotencyKey ? { idempotencyKey } : {}),
       seq: this.rawTranscriptSeq,
     });
+    if (readOwnedVoiceTranscriptReplacement(nextMessage)) {
+      return { shouldRefresh: true };
+    }
     const hadPendingTurnBoundary = this.turnBoundaryPending;
     const nextProjection = projectChatDisplayMessagesWithState([nextMessage], {
       includeCommentaryFallbacks: true,

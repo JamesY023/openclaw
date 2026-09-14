@@ -2,6 +2,7 @@ import { STREAM_ERROR_FALLBACK_TEXT } from "@openclaw/ai/internal/shared";
 import { GATEWAY_ASSISTANT_ERROR_FALLBACK_TEXT } from "@openclaw/gateway-protocol/gateway-error-details";
 import { asOptionalRecord } from "@openclaw/normalization-core/record-coerce";
 import { normalizeLowercaseStringOrEmpty as normalizeErrorSignal } from "@openclaw/normalization-core/string-coerce";
+import { isIntermediateAssistantTranscriptMessage } from "../agents/embedded-agent-runner/message-visibility.js";
 import { renderAssistantRequestFailureCopy } from "../agents/failover/assistant-request-failure-copy.js";
 import { isContextOverflowError } from "../agents/failover/classify.js";
 import { readTranscriptSenderIdentity } from "../chat/sender-identity.js";
@@ -10,7 +11,11 @@ import {
   readNestedToolActivity,
   nestedToolActivityContent,
 } from "../sessions/nested-tool-activity.js";
-import { readSessionTranscriptRunId } from "../sessions/transcript-events.js";
+import {
+  readSessionTranscriptRunId,
+  readOwnedVoiceTranscriptReplacement,
+  resolveTerminalAssistantTranscriptRunId,
+} from "../sessions/transcript-events.js";
 import { formatProviderRefusalText } from "../shared/assistant-error-format.js";
 import { isTranscriptOnlyOpenClawAssistantMessage } from "../shared/transcript-only-openclaw-assistant.js";
 import {
@@ -425,7 +430,27 @@ export function projectChatDisplayMessagesWithState(
   messages: unknown[],
   options?: ChatDisplayProjectionOptions,
 ): ChatDisplayProjectionResult {
-  const projectedActivity = messages.map((message) => {
+  const replacements = new Map<string, { runId: string; index: number }>();
+  for (const [index, message] of messages.entries()) {
+    const replacement = readOwnedVoiceTranscriptReplacement(message);
+    if (replacement) {
+      replacements.set(replacement.messageId, { runId: replacement.runId, index });
+    }
+  }
+  const retained = messages.filter((message, index) => {
+    const row = asOptionalRecord(message);
+    const id = asOptionalRecord(row?.["__openclaw"])?.id;
+    const replacement = typeof id === "string" ? replacements.get(id) : undefined;
+    return (
+      !replacement ||
+      replacement.index <= index ||
+      row?.stopReason !== "stop" ||
+      isIntermediateAssistantTranscriptMessage(message) ||
+      resolveTerminalAssistantTranscriptRunId(message, readSessionTranscriptRunId(message)) !==
+        replacement.runId
+    );
+  });
+  const projectedActivity = retained.map((message) => {
     const activity = readNestedToolActivity(message);
     if (!activity) {
       return message;

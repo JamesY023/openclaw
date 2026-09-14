@@ -19,6 +19,7 @@ import {
   dropChatHistoryOverreadContextMessage,
   readChatHistoryMessageId,
   readChatHistoryRecoveryContext,
+  readOwnedVoiceReplacementContext,
   readChatHistoryMessageSeq,
   readIncrementalChatHistoryTail,
   type IncrementalChatHistoryTail,
@@ -369,9 +370,22 @@ export async function readChatHistoryPage(params: {
         resolveCurrentUserProfileDisplay,
         turnBoundaryPending: isHeartbeatHistoryTurnBoundaryMessage(overreadContextMessage),
       });
-    const projection = incrementalTail?.projection ?? project(localMessages);
+    const ownedContext = incrementalTail
+      ? []
+      : await readOwnedVoiceReplacementContext({
+          messages: localMessages,
+          readScope,
+          displaySource: readPage.displaySource,
+          snapshotSeq: readPage.totalMessages,
+        });
+    const projection = incrementalTail?.projection ?? project([...localMessages, ...ownedContext]);
     let projected = incrementalTail?.projected ?? projection.messages;
     const newestPageSeq = readChatHistoryMessageSeq(localMessages.at(-1));
+    if (ownedContext.length > 0) {
+      projected = projected.filter(
+        (message) => (readChatHistoryMessageSeq(message) ?? Infinity) <= (newestPageSeq ?? -1),
+      );
+    }
     if (
       !incrementalTail &&
       pageOffset > 0 &&
@@ -386,7 +400,11 @@ export async function readChatHistoryPage(params: {
         maxBytes: maxHistoryBytes,
       });
       if (recoveryContext.length > 0) {
-        projected = project([...localMessages, ...recoveryContext]).messages.filter(
+        projected = project([
+          ...localMessages,
+          ...recoveryContext,
+          ...ownedContext,
+        ]).messages.filter(
           (message) => (readChatHistoryMessageSeq(message) ?? Infinity) <= newestPageSeq,
         );
       }
