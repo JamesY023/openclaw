@@ -65,6 +65,7 @@ import { filterCodexDynamicTools } from "./dynamic-tool-profile.js";
 import { createCodexDynamicToolBridge } from "./dynamic-tools.js";
 import * as elicitationBridge from "./elicitation-bridge.js";
 import { CodexAppServerEventProjector } from "./event-projector.js";
+import { getCodexInferenceThread, ownCodexInferenceClient } from "./inference-routing.js";
 import { buildCodexRuntimeModelParams } from "./model-runtime.js";
 import {
   buildCodexAppServerConnectionFingerprint,
@@ -75,6 +76,7 @@ import { buildCodexPluginThreadConfig } from "./plugin-thread-config.js";
 import {
   flattenCodexDynamicToolFunctions,
   isJsonObject,
+  type CodexTurnStartParams,
   type CodexDynamicToolFunctionSpec,
   type CodexDynamicToolSpec,
   type CodexServerNotification,
@@ -4593,6 +4595,75 @@ describe("runCodexAppServerAttempt", () => {
     expect(inputText).toBe("hello");
     expect(inputText).not.toContain(memorySummary);
   });
+  it("keeps rendered private context on managed parent inference without inheriting it", async () => {
+    const { sessionFile, workspaceDir } = createRunPaths();
+    const privateInstructions = {
+      "SOUL.md": "PRIVATE_PARENT_SOUL_SENTINEL",
+      "IDENTITY.md": "PRIVATE_PARENT_IDENTITY_SENTINEL",
+      "USER.md": "PRIVATE_PARENT_USER_SENTINEL",
+    };
+    await fs.mkdir(workspaceDir, { recursive: true });
+    for (const [name, text] of Object.entries(privateInstructions)) {
+      await fs.writeFile(path.join(workspaceDir, name), text);
+    }
+    let parentInference: JsonObject | undefined;
+    let childInference: JsonObject | undefined;
+    const harness = createStartedThreadHarness(
+      async (method, request) => {
+        if (method === "account/read") {
+          return { account: { type: "apiKey" }, requiresOpenaiAuth: false };
+        }
+        if (method === "turn/start") {
+          const turn = request as CodexTurnStartParams;
+          const route = getCodexInferenceThread(harness.client, turn.threadId);
+          assert(route, "managed startup must own its inference route");
+          expect(turn.collaborationMode?.settings.developer_instructions).toBeNull();
+          const startup = harness.requests.find((entry) => entry.method === "thread/start")
+            ?.params as { developerInstructions?: string };
+          const body = (threadId: string, child = false): JsonObject => ({
+            instructions: startup.developerInstructions ?? "",
+            input: turn.input,
+            client_metadata: {
+              thread_id: threadId,
+              "x-codex-turn-metadata": JSON.stringify({
+                thread_id: threadId,
+                request_kind: "turn",
+                ...turn.responsesapiClientMetadata,
+                ...(child
+                  ? { parent_thread_id: turn.threadId, subagent_kind: "collab_spawn" }
+                  : {}),
+              }),
+            },
+          });
+          const nativeParent = body(turn.threadId);
+          const original = structuredClone(nativeParent);
+          parentInference = route.context.prepare(nativeParent).body;
+          expect(nativeParent).toEqual(original);
+          const nativeChild = body("child-thread", true);
+          childInference = route.context.prepare(nativeChild).body;
+          expect(childInference).toBe(nativeChild);
+        }
+        return undefined;
+      },
+      { persistedThreads: [] },
+    );
+    ownCodexInferenceClient(harness.client);
+    const params = createParams(sessionFile, workspaceDir, { provider: "openai" });
+    setAgentWorkspaceForTest(params, workspaceDir);
+    const run = runCodexAppServerAttempt(params);
+    await harness.waitForMethod("turn/start");
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    await harness.completeTurn({ threadId: "thread-1", turnId: "turn-1" });
+    await run;
+    assert(parentInference);
+    assert(childInference);
+    for (const text of Object.values(privateInstructions)) {
+      expect(parentInference.instructions).toContain(text);
+      expect(JSON.stringify(childInference)).not.toContain(text);
+      expect(JSON.stringify(harness.requests)).not.toContain(text);
+    }
+  });
+
   it("sends turn-scoped workspace instructions through Codex app-server payloads", async () => {
     const { sessionFile, workspaceDir } = createRunPaths();
     const agentsGuidance = "Follow AGENTS guidance.";
