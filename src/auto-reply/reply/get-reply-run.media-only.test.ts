@@ -14,6 +14,7 @@ import { MESSAGE_TOOL_ONLY_DELIVERY_HINT } from "../../plugin-sdk/message-tool-d
 import { beginSessionWorkAdmission } from "../../sessions/session-lifecycle-admission.js";
 import { normalizeSessionDeliveryState } from "../../utils/delivery-context.shared.js";
 import { hasControlCommand } from "../command-detection.js";
+import { withCommandSenderAuthority } from "../command-sender-authority.js";
 import { runReplyAgent } from "./agent-runner.runtime.js";
 import { resolveReplyDirectiveRouting } from "./get-reply-directives-routing.js";
 import { prepareReplyRunContext } from "./get-reply-run-context.js";
@@ -5011,6 +5012,33 @@ describe("runPreparedReply media-only handling", () => {
       __openclaw: { senderIsOwner: true },
     });
   });
+
+  it.each(["verified", "denied", "revoked", "unbound"] as const)(
+    "uses current sender authority at dispatch for %s input",
+    async (state) => {
+      const params = ownerParams();
+      let liveId: string | undefined = "verified-owner";
+      const sessionCtx = { ...params.sessionCtx, SenderId: "stale-client-id" };
+      params.sessionCtx =
+        state === "unbound"
+          ? sessionCtx
+          : withCommandSenderAuthority(sessionCtx, state === "denied" ? undefined : () => liveId);
+      resolveCurrentTurnImagesMock.mockImplementationOnce(async () => {
+        if (state === "revoked") {
+          liveId = undefined;
+        }
+        return {};
+      });
+      await runPreparedReply(params);
+      expect(requireRunReplyAgentCall().followupRun.run.senderId).toBe(
+        state === "unbound"
+          ? "stale-client-id"
+          : state === "verified"
+            ? "verified-owner"
+            : undefined,
+      );
+    },
+  );
 
   it("keeps the canonical current owner in bounded reply-run prompt guidance", async () => {
     const ownerIds = Array.from({ length: 24 }, (_, index) =>

@@ -28,6 +28,10 @@ import {
 } from "../../sessions/user-turn-transcript.js";
 import { buildChannelUserTurnSender } from "../../sessions/user-turn-transcript.metadata.js";
 import { isReasoningTagProvider } from "../../utils/provider-utils.js";
+import {
+  getCommandSenderAuthority,
+  hasCommandSenderAuthority,
+} from "../command-sender-authority.js";
 import { resolveInternalTurnTranscript } from "../internal-turn-source.js";
 import type { OriginatingChannelType } from "../templating.js";
 import { resolveCurrentTurnImages } from "./current-turn-images.js";
@@ -432,7 +436,11 @@ export async function executePreparedReplyRun(state: PreparedReplyRunAdmission) 
         : undefined,
       // Parent lineage authenticates inherited group policy for queued CLI/MCP runs.
       spawnedBy: normalizeOptionalString(preparedSessionState.sessionEntry?.spawnedBy),
-      senderId: normalizeOptionalString(sessionCtx.SenderId),
+      senderId: normalizeOptionalString(
+        hasCommandSenderAuthority(sessionCtx)
+          ? getCommandSenderAuthority(sessionCtx)?.()
+          : sessionCtx.SenderId,
+      ),
       channelContext: ctx.ChannelContext ?? sessionCtx.ChannelContext,
       senderName: normalizeOptionalString(sessionCtx.SenderName),
       senderUsername: normalizeOptionalString(sessionCtx.SenderUsername),

@@ -2,6 +2,10 @@ import { describe, expect, it } from "vitest";
 import { withGatewayToolCallerIdentity } from "../../agents/tools/gateway-caller-context.js";
 import { resolveCommandAuthorization } from "../../auto-reply/command-auth.js";
 import {
+  getCommandSenderAuthority,
+  withCommandSenderAuthority,
+} from "../../auto-reply/command-sender-authority.js";
+import {
   gatewayClientSenderFields,
   gatewayClientSessionCreator,
   resolveChatSendCallerContext,
@@ -169,6 +173,35 @@ describe("chat send command authority", () => {
       isAuthorizedSender: false,
     });
   });
+
+  it.each(["verified", "denied", "revoked"] as const)(
+    "projects only bound identity for a copied non-UI %s caller",
+    (state) => {
+      const original = createClient();
+      original.connect.client = {
+        id: "cli",
+        version: "test",
+        platform: "test",
+        mode: "cli",
+        displayName: "CLI",
+      };
+      const authority = getCommandSenderAuthority(resolveChatSendCallerContext(original));
+      const copied = withCommandSenderAuthority(
+        { ...original },
+        state === "denied" ? undefined : authority,
+      );
+      original.invalidated = state === "revoked";
+      const context = resolveChatSendCallerContext(copied);
+      expect(context).not.toHaveProperty("SenderId");
+      expect(context).not.toHaveProperty("SenderName");
+      expect(context).not.toHaveProperty("SenderUsername");
+      expect(getCommandSenderAuthority(context)?.()).toBe(
+        state === "verified" ? "profile-ada" : undefined,
+      );
+      expect(authorize(context).senderIsOwner).toBe(state === "verified");
+      expect(authorize(context, "cli").isAuthorizedSender).toBe(false);
+    },
+  );
 
   it.each([
     {

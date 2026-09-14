@@ -9,6 +9,7 @@ import {
 } from "../../../packages/gateway-protocol/src/index.js";
 import {
   getCommandSenderAuthority,
+  hasCommandSenderAuthority,
   withCommandSenderAuthority,
 } from "../../auto-reply/command-sender-authority.js";
 import type { UserTurnInput } from "../../sessions/user-turn-transcript.types.js";
@@ -74,16 +75,18 @@ export function resolveChatSendCallerContext(
   originatingChannel: string = INTERNAL_MESSAGE_CHANNEL,
 ) {
   const synthetic = isSyntheticGatewayCaller(client ?? null);
+  const hasBoundAuthority = client != null && hasCommandSenderAuthority(client);
   const commandSenderAuthority = synthetic
     ? undefined
-    : (getCommandSenderAuthority(client) ??
-      (() =>
-        client?.authenticatedUserId &&
-        !client.invalidated &&
-        !client.connectionSignal?.aborted &&
-        !isSyntheticGatewayCaller(client)
-          ? client.authenticatedUserProfile?.profileId
-          : undefined));
+    : hasBoundAuthority
+      ? getCommandSenderAuthority(client)
+      : () =>
+          client?.authenticatedUserId &&
+          !client.invalidated &&
+          !client.connectionSignal?.aborted &&
+          !isSyntheticGatewayCaller(client)
+            ? client.authenticatedUserProfile?.profileId
+            : undefined;
   return withCommandSenderAuthority(
     {
       Provider: INTERNAL_MESSAGE_CHANNEL,
@@ -91,7 +94,7 @@ export function resolveChatSendCallerContext(
       OriginatingChannel: originatingChannel,
       ChatType: "direct",
       ApprovalReviewerDeviceId: normalizeOptionalString(client?.connect?.device?.id),
-      ...(!synthetic && !isOperatorUiClient(clientInfo)
+      ...(!synthetic && !hasBoundAuthority && !isOperatorUiClient(clientInfo)
         ? {
             SenderId: clientInfo?.id,
             SenderName: clientInfo?.displayName,

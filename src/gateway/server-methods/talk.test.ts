@@ -3037,6 +3037,126 @@ describe("talk.client.toolCall handler", () => {
     expect(copiedClient.connect.caps).toEqual(["tool-events"]);
   });
 
+  it.each([
+    { name: "owner", verified: true, nonUi: false, allowed: true },
+    { name: "non-UI spoof", verified: false, nonUi: true, allowed: false },
+    { name: "revoked owner", verified: true, nonUi: true, revoked: true, allowed: false },
+  ])("binds chat-backed voice control gates to the live $name", async (candidate) => {
+    await withOpenClawTestState({ scenario: "minimal" }, async () => {
+      const voice = await vi.importActual<typeof import("../../talk/client-voice-session.js")>(
+        "../../talk/client-voice-session.js",
+      );
+      const { clientVoiceSessionTesting } =
+        await import("../../talk/client-voice-session.test-support.js");
+      const { runBeforeToolCallHook } =
+        await import("../../agents/agent-tools.before-tool-call.js");
+      const { consumeFinalClientVoiceToolConfirmation } =
+        await import("../../agents/agent-tools.before-tool-call.policy.js");
+      const { prepareTalkClientControlAuthority } = await import("../talk-client-agent-consult.js");
+      const { resolveTalkAgentConsultAuthority } =
+        await import("../talk-client-gateway-control.js");
+      const connId = `conn-voice-authority-${candidate.name}`;
+      const sessionKey = "agent:jessica:voice-test";
+      const config = {
+        commands: { ownerAllowFrom: ["test"] },
+        agents: { list: [{ id: "jessica" }] },
+        plugins: { entries: { "skynet-jessica": { config: { ownerProfileId: "test" } } } },
+      };
+      const client: GatewayClient = {
+        connId,
+        authenticatedUserId: candidate.verified ? "ada@example.test" : undefined,
+        authenticatedUserProfile: candidate.verified
+          ? { profileId: "test", displayName: "Ada", hasAvatar: false, updatedAt: 1 }
+          : undefined,
+        connect: {
+          minProtocol: 1,
+          maxProtocol: 1,
+          client: {
+            id: candidate.nonUi ? "test" : "openclaw-control-ui",
+            version: "test",
+            platform: "test",
+            mode: candidate.nonUi ? "test" : "webchat",
+          },
+          scopes: ["operator.admin"],
+        },
+      };
+      let forwardedClient: GatewayClient | null | undefined;
+      mocks.chatSend.mockImplementationOnce(async (request: GatewayRequestHandlerOptions) => {
+        forwardedClient = request.client;
+        request.respond(true, { runId: "run-voice-1" }, undefined);
+      });
+      const respond = vi.fn();
+      try {
+        await callTalkHandler("talk.client.toolCall", {
+          params: {
+            sessionKey,
+            callId: "call-verified-voice",
+            name: "openclaw_agent_consult",
+            args: { question: "Send the synthetic summary" },
+          },
+          client,
+          respond,
+          context: { getRuntimeConfig: () => config },
+        });
+        expectRespondOk(respond);
+        const copiedClient = expectDefined(forwardedClient, "Talk must forward its caller");
+        client.invalidated = candidate.revoked === true;
+        const caller = resolveChatSendCallerContext(copiedClient);
+        expect(caller).not.toHaveProperty("SenderId");
+        const voiceSessionId = voice.createOrResumeClientVoiceSession({
+          agentId: "jessica",
+          sessionKey,
+          origin: "client",
+          transcriptCapable: true,
+        });
+        voice.registerClientVoiceConsultRun({
+          agentId: "jessica",
+          sessionKey,
+          voiceSessionId,
+          runId: "run-voice-1",
+        });
+        const control = prepareTalkClientControlAuthority({
+          config,
+          authority: resolveTalkAgentConsultAuthority(copiedClient.connect.scopes, copiedClient),
+          sessionTarget: {
+            agentId: "jessica",
+            sessionKey,
+            canonicalKey: sessionKey,
+            storePath: "/unused",
+          },
+          source: "reply",
+          agentRuntime: {
+            session: { getSessionEntry: () => undefined },
+            resolveAgentDir: () => "/unused",
+            resolveAgentWorkspaceDir: () => "/unused",
+          } as never,
+        });
+        const action = {
+          toolName: "message",
+          params: { action: "send", message: "Synthetic", ownerAuthorized: true },
+          ctx: {
+            agentId: "jessica",
+            sessionKey,
+            runId: "run-voice-1",
+            config,
+            requester: {
+              channel: control.messageProvider,
+              senderId: control.senderId,
+              senderIsOwner: control.senderIsOwner,
+            },
+          },
+        };
+        expect.soft((await runBeforeToolCallHook(action)).blocked).toBe(!candidate.allowed);
+        expect
+          .soft(consumeFinalClientVoiceToolConfirmation(action).allowed)
+          .toBe(candidate.allowed);
+      } finally {
+        clientVoiceSessionTesting.reset();
+        forgetLegacyVoiceBinding(connId, sessionKey, "voice-test");
+      }
+    });
+  });
+
   it("implicitly creates a voice session for consults without a binding", async () => {
     const respond = vi.fn();
 

@@ -1,5 +1,6 @@
 // Tests agent runner utility decisions for fallbacks, channels, and reasoning tags.
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { withCommandSenderAuthority } from "../command-sender-authority.js";
 import type { FollowupRun } from "./queue.js";
 
 const hoisted = vi.hoisted(() => {
@@ -85,6 +86,38 @@ describe("agent-runner-utils", () => {
     hoisted.isReasoningTagProviderMock.mockReset();
     hoisted.isReasoningTagProviderMock.mockReturnValue(false);
   });
+
+  it.each(["verified", "denied", "revoked", "replaced", "unbound", "empty"] as const)(
+    "uses live sender identity in final embedded params for %s context",
+    async (state) => {
+      let liveId: string | undefined = "verified-owner";
+      const context = state === "empty" ? {} : { Provider: "webchat", SenderId: "stale-client-id" };
+      const sessionCtx =
+        state === "unbound" || state === "empty"
+          ? context
+          : withCommandSenderAuthority(context, state === "denied" ? undefined : () => liveId);
+      const pending = buildEmbeddedRunExecutionParams({
+        run: makeRun({ senderId: "admitted-owner", senderIsOwner: true }),
+        sessionCtx,
+        provider: "openai",
+        model: "gpt-4.1-mini",
+        runId: "run-verified-owner",
+        hasRepliedRef: undefined,
+      });
+      if (state === "revoked" || state === "replaced") {
+        liveId = state === "replaced" ? "replacement-owner" : undefined;
+      }
+      const resolved = await pending;
+      expect(resolved.senderContext.senderId).toBe(
+        state === "unbound"
+          ? "stale-client-id"
+          : state === "verified" || state === "replaced"
+            ? liveId
+            : undefined,
+      );
+      expect(resolved.runBaseParams).not.toHaveProperty("senderId");
+    },
+  );
 
   it("resolves model fallback options from run context", () => {
     hoisted.resolveModelFallbackAvailabilityMock.mockReturnValue({

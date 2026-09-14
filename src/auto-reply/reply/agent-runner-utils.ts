@@ -25,6 +25,10 @@ import {
 } from "../../config/config.js";
 import type { SessionEntry } from "../../config/sessions.js";
 import { isReasoningTagProvider } from "../../utils/provider-utils.js";
+import {
+  getCommandSenderAuthority,
+  hasCommandSenderAuthority,
+} from "../command-sender-authority.js";
 import type { TemplateContext } from "../templating.js";
 import { resolveRunAuthProfile } from "./agent-runner-auth-profile.js";
 import { buildEmbeddedRunBaseParams as buildEmbeddedRunBaseParamsCore } from "./agent-runner-run-params.js";
@@ -320,7 +324,11 @@ function normalizeMemberRoleIds(value: TemplateContext["MemberRoleIds"]): string
 
 function buildTemplateSenderContext(sessionCtx: TemplateContext) {
   return {
-    senderId: normalizeOptionalString(sessionCtx.SenderId),
+    senderId: normalizeOptionalString(
+      hasCommandSenderAuthority(sessionCtx)
+        ? getCommandSenderAuthority(sessionCtx)?.()
+        : sessionCtx.SenderId,
+    ),
     channelContext: sessionCtx.ChannelContext,
     senderName: normalizeOptionalString(sessionCtx.SenderName),
     senderUsername: normalizeOptionalString(sessionCtx.SenderUsername),
@@ -347,7 +355,6 @@ export async function buildEmbeddedRunExecutionParams(params: {
     sessionCtx: params.sessionCtx,
     hasRepliedRef: params.hasRepliedRef,
   });
-  const senderContext = buildTemplateSenderContext(params.sessionCtx);
   const runBaseParams = await buildEmbeddedRunBaseParams({
     run: params.run,
     provider: params.provider,
@@ -359,7 +366,7 @@ export async function buildEmbeddedRunExecutionParams(params: {
   });
   return {
     embeddedContext,
-    senderContext,
+    senderContext: buildTemplateSenderContext(params.sessionCtx),
     runBaseParams,
   };
 }
