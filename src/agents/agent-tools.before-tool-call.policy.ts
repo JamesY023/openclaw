@@ -91,7 +91,7 @@ function isJessicaOwnerVoiceRun(
     ctx?.agentId === "jessica" &&
     typeof ctx.sessionKey === "string" &&
     ctx.sessionKey === voiceRun.sessionKey &&
-    /^agent:jessica:/.test(ctx.sessionKey) &&
+    ctx.sessionKey.startsWith("agent:jessica:") &&
     !/^agent:jessica:(?:subagent|cron|worker|acp):/.test(ctx.sessionKey) &&
     typeof ownerProfileId === "string" &&
     ownerProfileId.length > 0 &&
