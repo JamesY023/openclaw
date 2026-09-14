@@ -36,7 +36,10 @@ const storeMocks = vi.hoisted(() => ({
   updateAuthProfileStoreWithLock: vi.fn().mockResolvedValue(null),
 }));
 const codexQuotaRead = vi.hoisted(() => vi.fn());
-vi.mock("../../../extensions/codex/api.js", () => ({ readCodexProfileRateLimits: codexQuotaRead }));
+const codexQuotaFacade = vi.hoisted(() => vi.fn());
+vi.mock("../../plugin-sdk/facade-runtime.js", () => ({
+  loadActivatedBundledPluginPublicSurfaceModuleSync: codexQuotaFacade,
+}));
 
 const fetchMock = vi.hoisted(() => vi.fn());
 
@@ -2019,6 +2022,8 @@ describe("Skynet rejected Codex quota recheck", () => {
     const persisted = structuredClone(store);
     let reads = 0,
       writes = 0;
+    codexQuotaFacade.mockReset();
+    codexQuotaFacade.mockReturnValue({ readCodexProfileRateLimits: codexQuotaRead });
     codexQuotaRead.mockReset();
     codexQuotaRead.mockImplementation(async () => {
       duringRead(persisted, ++reads);
@@ -2077,6 +2082,10 @@ describe("Skynet rejected Codex quota recheck", () => {
       expect(result.plan.forwardedAuthProfileId).toBe(profileId);
       expect(f.counts()).toEqual({ reads: 1, writes: 1 });
       expect(f.store.usageStats?.[profileId].blockedUntil).toBeUndefined();
+      expect(codexQuotaFacade).toHaveBeenCalledWith({
+        dirName: "codex",
+        artifactBasename: "api.js",
+      });
       expect(codexQuotaRead).toHaveBeenCalledWith({
         agentDir: "/fixture/agent",
         profileId,
@@ -2084,6 +2093,16 @@ describe("Skynet rejected Codex quota recheck", () => {
       });
     },
   );
+  it("retains the quota block when the activated public facade is unavailable", async () => {
+    const f = fixture();
+    const before = structuredClone(f.store.usageStats);
+    codexQuotaFacade.mockImplementationOnce(() => {
+      throw new Error("Codex plugin facade unavailable");
+    });
+    await f.run();
+    expect(f.store.usageStats).toEqual(before);
+    expect(f.counts()).toEqual({ reads: 0, writes: 0 });
+  });
   it.each([
     { ...headroom, accountId: "unrelated-account" },
     {

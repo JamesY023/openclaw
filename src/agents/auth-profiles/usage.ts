@@ -15,6 +15,7 @@ import {
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import { cancelUnreadResponseBody } from "../../infra/http-body.js";
 import { createSubsystemLogger } from "../../logging/subsystem.js";
+import { loadActivatedBundledPluginPublicSurfaceModuleSync } from "../../plugin-sdk/facade-runtime.js";
 import { readProviderJsonResponse } from "../provider-http-errors.js";
 import { resolveProviderRequestHeaders } from "../provider-request-config.js";
 import { notifyAuthProfileFailureHook } from "./failure-hook.js";
@@ -143,7 +144,9 @@ export async function reprobeCodexBlockedProfiles(params: {
         let cleared = false;
         let rates: unknown;
         try {
-          const { readCodexProfileRateLimits } = await import("../../../extensions/codex/api.js");
+          const { readCodexProfileRateLimits } = loadActivatedBundledPluginPublicSurfaceModuleSync<
+            typeof import("../../../extensions/codex/api.js")
+          >({ dirName: "codex", artifactBasename: "api.js" });
           rates = await readCodexProfileRateLimits({
             agentDir: params.agentDir,
             profileId,
