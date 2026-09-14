@@ -1,8 +1,9 @@
-import { lazyCompile as compile } from "./protocol-validator.js";
+import { lazyCompile as compile, type ProtocolValidator } from "./protocol-validator.js";
 import * as S from "./schema-modules.js";
 import type {
   AuditActivityListParams,
   AuditRunInspectParams,
+  WorkerTranscriptCommitParams,
   WebPushSubscribeParams,
   WebPushPreferencesGetParams,
   WebPushPreferencesSetParams,
@@ -74,10 +75,8 @@ function checkWorkerProtocolJson(data: unknown): ValidationError | undefined {
   return undefined;
 }
 
-export const validateWorkerTranscriptCommitParams = compile(
-  S.WorkerTranscriptCommitParamsSchema,
-  checkWorkerProtocolJson,
-);
+export const validateWorkerTranscriptCommitParams: ProtocolValidator<WorkerTranscriptCommitParams> =
+  compile(S.WorkerTranscriptCommitParamsSchema, checkWorkerProtocolJson);
 export const validateWorkerLiveEventParams = compile(
   S.WorkerLiveEventParamsSchema,
   checkWorkerProtocolJson,
