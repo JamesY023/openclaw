@@ -3,6 +3,7 @@ import type { EmbeddedRunCompletionRegistration } from "../agents/embedded-agent
 import { prepareEmbeddedAgentRunCompletionClaim } from "../agents/embedded-agent-runner/runs.js";
 import { registerRequesterFinalAttachment } from "../agents/subagents/requester-final-attachment.js";
 import { resolveCommandAuthorization } from "../auto-reply/command-auth.js";
+import { getCommandSenderAuthority } from "../auto-reply/command-sender-authority.js";
 import { resolveInboundReplyToolAuthorityOverlay } from "../auto-reply/reply/reply-tool-authority.js";
 import { normalizeTalkSection } from "../config/talk.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
@@ -164,6 +165,7 @@ export function prepareTalkClientControlAuthority(params: {
   agentRuntime: ReturnType<typeof createPluginRuntime>["agent"];
 }) {
   const caller = params.authority.replyCaller;
+  const senderId = getCommandSenderAuthority(caller)?.();
   const authorization = caller
     ? resolveCommandAuthorization({ ctx: caller, cfg: params.config, commandAuthorized: false })
     : undefined;
@@ -181,7 +183,7 @@ export function prepareTalkClientControlAuthority(params: {
       ? {
           ...prepared.toolAuthorityOverlay,
           messageProvider: caller.Provider,
-          senderId: authorization.senderId,
+          senderId,
           senderIsOwner: authorization.senderIsOwner,
         }
       : prepared.toolAuthorityOverlay;
@@ -193,7 +195,7 @@ export function prepareTalkClientControlAuthority(params: {
   // has no trace/client/reviewer capabilities and must never inherit these.
   const ctx = params.authority.replyCaller;
   return resolveInboundReplyToolAuthorityOverlay({
-    ctx: { ...ctx, SenderId: authorization?.senderId },
+    ctx: { ...ctx, SenderId: senderId },
     sessionEntry: prepared.sessionEntry,
     senderIsOwner: authorization?.senderIsOwner === true,
     toolsAllow: params.authority.toolsAllow,

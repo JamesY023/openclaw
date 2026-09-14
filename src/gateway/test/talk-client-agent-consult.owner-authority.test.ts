@@ -47,6 +47,15 @@ describe("initial Talk consult owner authority", () => {
     { name: "other admin", profile: "other-profile", verified: true, allowed: false },
     { name: "missing user", profile: "owner-profile", verified: false, allowed: false },
     { name: "missing profile", profile: undefined, verified: true, allowed: false },
+    { name: "client name spoof", profile: undefined, verified: false, spoof: true, allowed: false },
+    {
+      name: "revoked non-UI owner",
+      profile: "test",
+      verified: true,
+      spoof: true,
+      revoked: true,
+      allowed: false,
+    },
     {
       name: "synthetic",
       profile: "owner-profile",
@@ -62,10 +71,13 @@ describe("initial Talk consult owner authority", () => {
       allowed: false,
     },
   ])("applies current caller authority to the first $name run", async (candidate) => {
+    // A valid protocol client ID can also be a configured profile ID; its
+    // display metadata must never supply verified caller identity.
+    const ownerProfileId = candidate.spoof ? "test" : "owner-profile";
     const config = {
-      commands: { ownerAllowFrom: ["owner-profile"] },
+      commands: { ownerAllowFrom: [ownerProfileId] },
       agents: { list: [{ id: "jessica", workspace: path.join(stateDir, "workspace") }] },
-      plugins: { entries: { "skynet-jessica": { config: { ownerProfileId: "owner-profile" } } } },
+      plugins: { entries: { "skynet-jessica": { config: { ownerProfileId } } } },
     };
     const sessionKey = `agent:jessica:${candidate.delegated ? "subagent:" : ""}voice-test`;
     const runtime = createPluginRuntime().agent;
@@ -83,6 +95,7 @@ describe("initial Talk consult owner authority", () => {
       },
     });
     const client = {
+      invalidated: false,
       authenticatedUserId: candidate.verified ? "owner@example.test" : undefined,
       authenticatedUserProfile: candidate.profile
         ? { profileId: candidate.profile, displayName: "Fixture", hasAvatar: false, updatedAt: 1 }
@@ -91,8 +104,8 @@ describe("initial Talk consult owner authority", () => {
         minProtocol: 1,
         maxProtocol: 1,
         client: {
-          id: "openclaw-control-ui" as const,
-          mode: "webchat" as const,
+          id: candidate.spoof ? ("test" as const) : ("openclaw-control-ui" as const),
+          mode: candidate.spoof ? ("test" as const) : ("webchat" as const),
           version: "test",
           platform: "test",
         },
@@ -107,11 +120,13 @@ describe("initial Talk consult owner authority", () => {
       origin: "client",
       transcriptCapable: true,
     });
+    const authority = resolveTalkAgentConsultAuthority(client.connect.scopes, client);
+    client.invalidated = candidate.revoked === true;
     const runner = createTalkClientAgentConsultRunner({
       config,
       context: { chatAbortControllers: new Map(), logGateway: { warn: vi.fn() } } as never,
       sessionTarget: { agentId: "jessica", sessionKey, canonicalKey: sessionKey, storePath },
-      authority: resolveTalkAgentConsultAuthority(client.connect.scopes, client),
+      authority,
       getVoiceSessionId: () => voiceSessionId,
       initialItems: [],
       registerRun: ({ runId }) => {
@@ -145,6 +160,26 @@ describe("initial Talk consult owner authority", () => {
       },
     };
     expect.soft((await runBeforeToolCallHook(action)).blocked).toBe(!candidate.allowed);
-    expect(consumeFinalClientVoiceToolConfirmation(action).allowed).toBe(candidate.allowed);
+    expect.soft(consumeFinalClientVoiceToolConfirmation(action).allowed).toBe(candidate.allowed);
+    for (const source of ["attempt", "reply"] as const) {
+      const overlay = runner.getToolAuthorityOverlay(undefined, source);
+      const controlAction = {
+        ...action,
+        ctx: {
+          ...action.ctx,
+          requester: {
+            channel: overlay.messageProvider,
+            senderId: overlay.senderId,
+            senderIsOwner: overlay.senderIsOwner,
+          },
+        },
+      };
+      expect
+        .soft((await runBeforeToolCallHook(controlAction)).blocked, source)
+        .toBe(!candidate.allowed);
+      expect
+        .soft(consumeFinalClientVoiceToolConfirmation(controlAction).allowed, source)
+        .toBe(candidate.allowed);
+    }
   });
 });
