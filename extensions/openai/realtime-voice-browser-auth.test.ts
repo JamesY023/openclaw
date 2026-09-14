@@ -1,5 +1,6 @@
 // Openai tests cover realtime voice provider plugin behavior.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { createCallResponse, FakeSocket } from "./realtime-quicksilver.test-helpers.js";
 import { buildOpenAIRealtimeVoiceProvider } from "./realtime-voice-provider.js";
 
 const mocks = await vi.hoisted(async () => {
@@ -57,6 +58,7 @@ const {
   requireFetchHeaders,
   requireFetchJsonBody,
   createTestJwt,
+  readInternalRealtimeVoiceProviderApi,
   resetTestState,
   restoreTestEnvironment,
   mockRealtimeClientSecretResponse,
@@ -71,6 +73,136 @@ describe("OpenAI realtime voice browser authentication", () => {
 
   afterEach(() => {
     restoreTestEnvironment();
+  });
+
+  it.each([
+    {
+      name: "requested OAuth",
+      requested: true,
+      oauth: true,
+      model: "gpt-live-1-codex",
+      expected: "gateway-relay",
+    },
+    {
+      name: "API-key fallback",
+      requested: true,
+      oauth: false,
+      model: "gpt-live-1-codex",
+      expected: undefined,
+    },
+    {
+      name: "unrequested OAuth",
+      requested: undefined,
+      oauth: true,
+      model: "gpt-live-1-codex",
+      expected: undefined,
+    },
+    {
+      name: "explicit provider ownership",
+      requested: false,
+      oauth: true,
+      model: "gpt-live-1-codex",
+      expected: undefined,
+    },
+    {
+      name: "other model",
+      requested: true,
+      oauth: true,
+      model: "gpt-realtime-2.1",
+      expected: undefined,
+    },
+    {
+      name: "unlisted model",
+      requested: true,
+      oauth: true,
+      model: "gpt-live-test-canary",
+      expected: undefined,
+    },
+  ])("selects owned browser transport from actual $name", async (mode) => {
+    const oauthToken = createTestJwt({
+      "https://api.openai.com/auth": { chatgpt_account_id: "account-123" },
+    });
+    resolveProviderAuthProfileApiKeyMock.mockImplementation(
+      async ({ profileTypes }: { profileTypes?: readonly string[] }) =>
+        mode.oauth && profileTypes?.includes("oauth") ? oauthToken : undefined,
+    );
+    const { broker, createBrowserSession } = createQuicksilverBrowserBrokerFixture();
+    const provider = buildOpenAIRealtimeVoiceProvider({ quicksilverBrowserSessionBroker: broker });
+    const api = readInternalRealtimeVoiceProviderApi(provider);
+    await expect(
+      api.resolveBrowserSessionTransport({
+        providerConfig: { model: "gpt-realtime-2.1", apiKey: "test-api-key-platform" },
+        model: mode.model,
+        hostOwnedOutput: mode.requested,
+      }),
+    ).resolves.toBe(mode.expected);
+    if (!mode.requested || mode.model !== "gpt-live-1-codex") {
+      expect(resolveProviderAuthProfileApiKeyMock).not.toHaveBeenCalled();
+    }
+    expect(createBrowserSession).not.toHaveBeenCalled();
+    expect(fetchWithSsrFGuardMock).not.toHaveBeenCalled();
+    expect(FakeWebSocket.instances).toHaveLength(0);
+  });
+
+  it.each(["missing", "failed"] as const)(
+    "preserves %s auth failure during owned transport selection",
+    async (state) => {
+      if (state === "failed") {
+        resolveProviderAuthProfileApiKeyMock.mockRejectedValue(new Error("auth owner failed"));
+      }
+      const api = readInternalRealtimeVoiceProviderApi(buildOpenAIRealtimeVoiceProvider());
+      await expect(
+        api.resolveBrowserSessionTransport({
+          providerConfig: { model: "gpt-live-1-codex" },
+          hostOwnedOutput: true,
+        }),
+      ).rejects.toThrow(state === "failed" ? "auth owner failed" : /auth|OAuth/i);
+      expect(fetchWithSsrFGuardMock).not.toHaveBeenCalled();
+      expect(FakeWebSocket.instances).toHaveLength(0);
+    },
+  );
+
+  it("rechecks actual auth after an owned browser transport selection", async () => {
+    const oauthToken = createTestJwt({
+      "https://api.openai.com/auth": { chatgpt_account_id: "account-123" },
+    });
+    resolveProviderAuthProfileApiKeyMock.mockResolvedValue(oauthToken);
+    const provider = buildOpenAIRealtimeVoiceProvider();
+    const api = readInternalRealtimeVoiceProviderApi(provider);
+    const providerConfig = { model: "gpt-live-1-codex", apiKey: "test-api-key-platform" };
+    const onOutputOwnership = vi.fn();
+    await expect(
+      api.resolveBrowserSessionTransport({ providerConfig, hostOwnedOutput: true }),
+    ).resolves.toBe("gateway-relay");
+    expect(onOutputOwnership).not.toHaveBeenCalled();
+    expect(fetchWithSsrFGuardMock).not.toHaveBeenCalled();
+    resolveProviderAuthProfileApiKeyMock.mockResolvedValue(undefined);
+    const request = {
+      providerConfig,
+      hostOwnedOutput: true,
+      onOutputOwnership,
+      onAudio: vi.fn(),
+      onClearAudio: vi.fn(),
+      runAgentConsult: vi.fn(async () => ({ text: "Done" })),
+      createPeer: async () => ({
+        createOffer: vi.fn(async () => "v=offer\r\n"),
+        applyAnswer: vi.fn(async () => undefined),
+        adoptPendingAudio: vi.fn(),
+        sendAudio: vi.fn(),
+        close: vi.fn(),
+      }),
+      fetchImpl: vi.fn(async () => createCallResponse("v=answer\r\n", "rtc_auth_handoff")),
+      webSocketFactory: () => new FakeSocket(),
+    };
+    const bridge = provider.createBridge(request);
+    try {
+      await bridge.connect();
+      expect(onOutputOwnership).toHaveBeenCalledExactlyOnceWith("provider");
+      expect(resolveProviderAuthProfileApiKeyMock).toHaveBeenCalledTimes(2);
+      expect(request.fetchImpl).toHaveBeenCalledOnce();
+    } finally {
+      bridge.close();
+    }
   });
 
   it.each([

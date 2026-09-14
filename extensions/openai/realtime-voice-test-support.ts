@@ -99,6 +99,13 @@ type InternalRealtimeVoiceProviderApi = {
     providerConfig: Record<string, unknown>;
     agentId?: string;
   }) => boolean;
+  resolveBrowserSessionTransport: (ctx: {
+    cfg?: object;
+    providerConfig: Record<string, unknown>;
+    agentId?: string;
+    model?: string;
+    hostOwnedOutput?: boolean;
+  }) => Promise<"gateway-relay" | undefined>;
   isGatewayRelayConfigured: (ctx: {
     cfg?: object;
     providerConfig: Record<string, unknown>;

@@ -81,6 +81,13 @@ type OpenAIInternalRealtimeVoiceProviderApi = {
     model?: string;
     clientControl?: RealtimeVoiceBrowserSessionCreateRequest["clientControl"];
   }) => OpenAIInternalRealtimeVoiceCapabilities;
+  resolveBrowserSessionTransport?: (ctx: {
+    cfg?: RealtimeVoiceBrowserSessionCreateRequest["cfg"];
+    providerConfig: RealtimeVoiceProviderConfig;
+    agentId?: string;
+    model?: string;
+    hostOwnedOutput?: boolean;
+  }) => Promise<"gateway-relay" | undefined>;
   isGatewayRelayConfigured?: (ctx: {
     cfg?: RealtimeVoiceBrowserSessionCreateRequest["cfg"];
     providerConfig: RealtimeVoiceProviderConfig;
@@ -559,6 +566,29 @@ export function buildOpenAIRealtimeVoiceProvider(
           ? { supportsGatewayControl: true }
           : {}),
       };
+    },
+    resolveBrowserSessionTransport: async ({
+      cfg,
+      providerConfig,
+      agentId,
+      model,
+      hostOwnedOutput,
+    }) => {
+      const config = normalizeProviderConfig(providerConfig);
+      const effectiveModel = model ?? config.model ?? OPENAI_REALTIME_DEFAULT_MODEL;
+      if (
+        !hostOwnedOutput ||
+        !isSupportedOpenAIGptLiveModel(effectiveModel) ||
+        config.azureEndpoint ||
+        config.azureDeployment
+      ) {
+        return undefined;
+      }
+      const auth = await resolveOpenAIQuicksilverBridgeAuth(
+        { configuredApiKey: config.apiKey, cfg, agentId, model: effectiveModel },
+        context,
+      );
+      return auth.type === "oauth" ? "gateway-relay" : undefined;
     },
     isGatewayRelayConfigured: ({ cfg, providerConfig, agentId }) => {
       const config = normalizeProviderConfig(providerConfig);
