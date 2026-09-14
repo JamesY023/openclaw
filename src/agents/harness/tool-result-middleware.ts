@@ -318,7 +318,7 @@ function coerceMiddlewareToolResult(
  * `isValidMiddlewareDetails`. Round-trips through `JSON.stringify` with a
  * WeakSet replacer that drops functions, symbols, and `undefined`; coerces
  * bigints to their decimal string form; breaks cycles at the offending
- * reference; and collapses payloads larger than the validator byte cap to a
+ * reference; and collapses payloads exceeding validator byte or shape limits to a
  * `{ truncated, originalSizeBytes }` marker. Returns `null` for inputs that
  * cannot be represented at all (top-level function/symbol/undefined).
  */
@@ -328,9 +328,10 @@ function sanitizeMiddlewareDetailsValue(value: unknown): unknown {
     return null;
   }
   const bytes = Buffer.byteLength(serialized, "utf8");
-  return bytes > MAX_MIDDLEWARE_DETAILS_BYTES
+  const normalized: unknown = JSON.parse(serialized);
+  return bytes > MAX_MIDDLEWARE_DETAILS_BYTES || !hasValidMiddlewareDetailsShape(normalized)
     ? { truncated: true, originalSizeBytes: bytes }
-    : JSON.parse(serialized);
+    : normalized;
 }
 
 /**

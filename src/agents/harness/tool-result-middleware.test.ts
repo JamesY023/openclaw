@@ -550,6 +550,75 @@ describe("createAgentToolResultMiddlewareRunner", () => {
     expect(sanitized.originalSizeBytes ?? 0).toBeGreaterThan(100_000);
   });
 
+  it.each(["openclaw", "codex"] as const)(
+    "%s preserves mobile snapshots and device errors when incoming details exceed shape limits",
+    async (runtime) => {
+      // The captured Android result had 196 elements below the byte cap but above the entry cap.
+      const snapshot = {
+        snapshotId: "mobile-snapshot",
+        package: "com.example.chat",
+        windowTitle: "Chat",
+        nodes: Array.from({ length: 196 }, (_, i) => ({
+          ref: `n${i}`,
+          parentRef: i ? "n0" : null,
+          role: "node",
+          text: null,
+          contentDescription: null,
+          viewId: null,
+          bounds: [0, 0, 1440, 3120],
+          flags: {
+            clickable: false,
+            editable: false,
+            scrollable: false,
+            enabled: true,
+            focused: false,
+          },
+          actions: [],
+        })),
+      };
+      const deepDetails = Array.from({ length: 22 }).reduce<Record<string, unknown>>(
+        (value) => ({ nested: value }),
+        {},
+      );
+      for (const { text, details, isError } of [
+        { text: JSON.stringify(snapshot, null, 2), details: snapshot, isError: false },
+        { text: "Accessibility Control is not enabled", details: snapshot, isError: true },
+        { text: "Device is locked", details: deepDetails, isError: true },
+      ]) {
+        let observedError: boolean | undefined;
+        const runner = createAgentToolResultMiddlewareRunner({ runtime }, [
+          (event) => {
+            observedError = event.isError;
+          },
+        ]);
+        const content = [{ type: "text" as const, text }];
+        const result = await runner.applyToolResultMiddleware({
+          toolCallId: "mobile-observe",
+          toolName: "mobile_ui",
+          args: { action: "observe", node: "mobile-capable-node" },
+          isError,
+          result: { content, details },
+        });
+        expect(result.content).toEqual(content);
+        expect(observedError).toBe(isError);
+        expect(result.details).toEqual({
+          truncated: true,
+          originalSizeBytes: Buffer.byteLength(JSON.stringify(details)),
+        });
+        const corrupting = createAgentToolResultMiddlewareRunner({ runtime }, [
+          () => ({ result: { content, details } }),
+        ]);
+        const rejected = await corrupting.applyToolResultMiddleware({
+          toolCallId: "mobile-observe",
+          toolName: "mobile_ui",
+          args: {},
+          result: { content, details: {} },
+        });
+        expect(rejected.details).toEqual({ status: "error", middlewareError: true });
+      }
+    },
+  );
+
   it("measures multibyte incoming details by serialized UTF-8 bytes", async () => {
     const runner = createAgentToolResultMiddlewareRunner({ runtime: "openclaw" }, [
       () => undefined,
