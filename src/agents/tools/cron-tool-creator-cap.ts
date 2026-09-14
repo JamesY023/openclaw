@@ -7,7 +7,12 @@ import {
   expandToolGroups,
   normalizeToolPolicyName,
 } from "../tool-policy.js";
-import type { CronCreatorToolAllowlistEntry, CronToolsAllowCaptureRef } from "./cron-tool.types.js";
+import type {
+  CronCreatorToolAllowlistEntry,
+  CronCreatorToolAuthoritySnapshot,
+  CronToolOptions,
+  CronToolsAllowCaptureRef,
+} from "./cron-tool.types.js";
 
 type NormalizedCronCreatorTool = {
   name: string;
@@ -81,6 +86,71 @@ export function assertInheritedCronToolCaptureReady(
     return;
   }
   throw new Error(INCOMPLETE_CRON_CREATOR_AUTHORITY_MESSAGE);
+}
+
+export function assertCronCreatorAuthorityResolutionAvailable(params: {
+  required: boolean;
+  resolveCreatorToolAuthority?: unknown;
+  creatorToolAllowlistCaptureRef?: CronToolsAllowCaptureRef;
+  unavailableReason?: "queued-local-operator-configured-mcp";
+}): void {
+  if (!params.required || params.resolveCreatorToolAuthority) {
+    return;
+  }
+  if (
+    params.unavailableReason === "queued-local-operator-configured-mcp" ||
+    !isCronCreatorToolCaptureComplete(params.creatorToolAllowlistCaptureRef)
+  ) {
+    throw new Error(
+      params.unavailableReason === "queued-local-operator-configured-mcp"
+        ? `Configured MCP authority is unavailable because this local operator turn was queued. ${CRON_CREATOR_AUTHORITY_RECOVERY_MESSAGE}`
+        : INCOMPLETE_CRON_CREATOR_AUTHORITY_MESSAGE,
+    );
+  }
+}
+
+export async function resolveAndCapCronJobToolsAllowOnCreate(
+  job: Record<string, unknown>,
+  opts: CronToolOptions | undefined,
+  operationSignal?: AbortSignal,
+): Promise<CronCreatorToolAuthoritySnapshot | undefined> {
+  const requiresCreatorAuthority = cronCreateRequiresCreatorAuthority(
+    job,
+    opts?.creatorToolAllowlist,
+  );
+  assertCronCreatorAuthorityResolutionAvailable({
+    required: requiresCreatorAuthority,
+    resolveCreatorToolAuthority: opts?.resolveCreatorToolAuthority,
+    creatorToolAllowlistCaptureRef: opts?.creatorToolAllowlistCaptureRef,
+    unavailableReason: opts?.creatorAuthorityUnavailableReason,
+  });
+  const payload = isRecord(job.payload) ? job.payload : undefined;
+  const resolvedAuthority =
+    requiresCreatorAuthority && opts?.resolveCreatorToolAuthority
+      ? await opts.resolveCreatorToolAuthority({
+          signal: operationSignal,
+          ...(classifyExplicitToolsAllow(payload) === "finite" && Array.isArray(payload?.toolsAllow)
+            ? {
+                toolsAllow: payload.toolsAllow.filter(
+                  (tool): tool is string => typeof tool === "string",
+                ),
+              }
+            : {}),
+        })
+      : undefined;
+  operationSignal?.throwIfAborted();
+  const creatorToolAllowlist = resolvedAuthority?.tools ?? opts?.creatorToolAllowlist;
+  const creatorToolAllowlistCaptureRef = resolvedAuthority
+    ? { value: resolvedAuthority.provenance }
+    : opts?.creatorToolAllowlistCaptureRef;
+  if (resolvedAuthority && explicitFiniteToolsNeedResolution(payload, creatorToolAllowlist)) {
+    throw new Error(
+      "Requested automation tools are unavailable to this creator. No automation changes were saved.",
+    );
+  }
+  capCronJobToolsAllowOnCreate(job, creatorToolAllowlist);
+  assertInheritedCronToolCaptureReady(job, creatorToolAllowlistCaptureRef);
+  return resolvedAuthority;
 }
 
 export function replaceWithEffectiveCronCreatorToolAllowlist<T extends { name: string }>(

@@ -41,12 +41,8 @@ import {
   stripExistingContext,
 } from "./cron-tool-context.js";
 import {
-  assertInheritedCronToolCaptureReady,
-  capCronJobToolsAllowOnCreate,
-  cronCreateRequiresCreatorAuthority,
-  classifyExplicitToolsAllow,
-  explicitFiniteToolsNeedResolution,
   resolveCronCreatorExecToolTarget,
+  resolveAndCapCronJobToolsAllowOnCreate,
 } from "./cron-tool-creator-cap.js";
 import {
   assertCronPacingInput,
@@ -54,11 +50,7 @@ import {
   CRON_TOOL_LIST_MAX_LIMIT,
 } from "./cron-tool-schema.js";
 import { listCronSelfJob } from "./cron-tool-self-list.js";
-import {
-  assertCronCreatorAuthorityResolutionAvailable,
-  assertNoCronShellExecution,
-  updateCronJobFromAgentTool,
-} from "./cron-tool-write.js";
+import { assertNoCronShellExecution, updateCronJobFromAgentTool } from "./cron-tool-write.js";
 import type {
   CronCreatorToolAuthoritySnapshot,
   CronToolDeps,
@@ -501,46 +493,11 @@ export function createCronTool(opts?: CronToolOptions, deps?: CronToolDeps): Any
             ) {
               delete job.enabled;
             }
-            const requiresCreatorAuthority = cronCreateRequiresCreatorAuthority(
+            const resolvedAuthority = await resolveAndCapCronJobToolsAllowOnCreate(
               job,
-              opts?.creatorToolAllowlist,
+              opts,
+              operationSignal,
             );
-            assertCronCreatorAuthorityResolutionAvailable({
-              required: requiresCreatorAuthority,
-              resolveCreatorToolAuthority: opts?.resolveCreatorToolAuthority,
-              creatorToolAllowlistCaptureRef: opts?.creatorToolAllowlistCaptureRef,
-              unavailableReason: opts?.creatorAuthorityUnavailableReason,
-            });
-            const payload = isRecord(job.payload) ? job.payload : undefined;
-            const resolvedAuthority =
-              requiresCreatorAuthority && opts?.resolveCreatorToolAuthority
-                ? await opts.resolveCreatorToolAuthority({
-                    signal: operationSignal,
-                    ...(classifyExplicitToolsAllow(payload) === "finite" &&
-                    Array.isArray(payload?.toolsAllow)
-                      ? {
-                          toolsAllow: payload.toolsAllow.filter(
-                            (tool): tool is string => typeof tool === "string",
-                          ),
-                        }
-                      : {}),
-                  })
-                : undefined;
-            operationSignal?.throwIfAborted();
-            const creatorToolAllowlist = resolvedAuthority?.tools ?? opts?.creatorToolAllowlist;
-            const creatorToolAllowlistCaptureRef = resolvedAuthority
-              ? { value: resolvedAuthority.provenance }
-              : opts?.creatorToolAllowlistCaptureRef;
-            if (
-              resolvedAuthority &&
-              explicitFiniteToolsNeedResolution(payload, creatorToolAllowlist)
-            ) {
-              throw new Error(
-                "Requested automation tools are unavailable to this creator. No automation changes were saved.",
-              );
-            }
-            capCronJobToolsAllowOnCreate(job, creatorToolAllowlist);
-            assertInheritedCronToolCaptureReady(job, creatorToolAllowlistCaptureRef);
             if (job && typeof job === "object") {
               const { mainKey, alias } = resolveMainSessionAlias(runtimeConfig);
               const resolvedSessionKey = opts?.agentSessionKey

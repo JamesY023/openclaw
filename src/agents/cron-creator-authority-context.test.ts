@@ -173,7 +173,9 @@ describe("bindCronManagementGrant", () => {
 
 it("Skynet finite resolver keeps requested tools bound to live creator authority", async () => {
   const capability = createCronCreatorAuthorityCapability("finite-run", { kind: "local" });
-  if (!capability) throw new Error("missing capability");
+  if (!capability) {
+    throw new Error("missing capability");
+  }
   const resolve = vi.fn(async (_options?: { signal?: AbortSignal; toolsAllow?: string[] }) => ({
     tools: ["read"],
     provenance: { version: 1 as const, source: "final-executable-surface" as const },

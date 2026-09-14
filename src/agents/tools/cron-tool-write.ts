@@ -2,7 +2,7 @@
 import { normalizeLowercaseStringOrEmpty } from "@openclaw/normalization-core/string-coerce";
 import { isRecord } from "../../utils.js";
 import {
-  CRON_CREATOR_AUTHORITY_RECOVERY_MESSAGE,
+  assertCronCreatorAuthorityResolutionAvailable,
   INCOMPLETE_CRON_CREATOR_AUTHORITY_MESSAGE,
   isCronCreatorToolCaptureComplete,
   planCronJobUpdatePatch,
@@ -35,27 +35,6 @@ export function assertNoCronShellExecution(value: unknown): void {
   }
   // Stream argv is authorized by the Gateway's cron.triggers.enabled gate,
   // matching trigger-script trust rather than ordinary agent exec policy.
-}
-
-export function assertCronCreatorAuthorityResolutionAvailable(params: {
-  required: boolean;
-  resolveCreatorToolAuthority?: unknown;
-  creatorToolAllowlistCaptureRef?: CronToolsAllowCaptureRef;
-  unavailableReason?: "queued-local-operator-configured-mcp";
-}): void {
-  if (!params.required || params.resolveCreatorToolAuthority) {
-    return;
-  }
-  if (
-    params.unavailableReason === "queued-local-operator-configured-mcp" ||
-    !isCronCreatorToolCaptureComplete(params.creatorToolAllowlistCaptureRef)
-  ) {
-    throw new Error(
-      params.unavailableReason === "queued-local-operator-configured-mcp"
-        ? `Configured MCP authority is unavailable because this local operator turn was queued. ${CRON_CREATOR_AUTHORITY_RECOVERY_MESSAGE}`
-        : INCOMPLETE_CRON_CREATOR_AUTHORITY_MESSAGE,
-    );
-  }
 }
 
 async function prepareCronJobUpdateForGateway(params: {
