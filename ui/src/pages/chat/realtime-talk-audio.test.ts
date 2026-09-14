@@ -260,3 +260,42 @@ describe("RealtimeTalkPcmOutputQueue", () => {
     expect(replacementSource?.stop).not.toHaveBeenCalled();
   });
 });
+
+describe("owned PCM playback drain", () => {
+  it("completes only after all scheduled sources end", async () => {
+    const context = new MockOutputAudioContext();
+    const queue = new RealtimeTalkPcmOutputQueue();
+    queue.play(silentPcmBase64(100), context as unknown as AudioContext, 100);
+    queue.play(silentPcmBase64(100), context as unknown as AudioContext, 100);
+    const completed = vi.fn();
+    const drain = queue.drain().then(completed);
+    context.currentTime = 100;
+    await Promise.resolve();
+    expect(completed).not.toHaveBeenCalled();
+    context.sources[0]?.emitEnded();
+    await Promise.resolve();
+    expect(completed).not.toHaveBeenCalled();
+    context.sources[1]?.emitEnded();
+    await drain;
+    expect(completed).toHaveBeenCalledWith("completed");
+  });
+  it("cancels before stopped sources fire ended and isolates replacement drain", async () => {
+    const context = new MockOutputAudioContext();
+    const queue = new RealtimeTalkPcmOutputQueue();
+    queue.play(silentPcmBase64(100), context as unknown as AudioContext, 100);
+    const oldSource = context.sources[0]!;
+    oldSource.stop.mockImplementation(() => oldSource.emitEnded());
+    const cancelled = queue.drain();
+    queue.stop(context as unknown as AudioContext);
+    await expect(cancelled).resolves.toBe("cancelled");
+    queue.play(silentPcmBase64(100), context as unknown as AudioContext, 100);
+    const completed = vi.fn();
+    const next = queue.drain().then(completed);
+    oldSource.emitEnded();
+    await Promise.resolve();
+    expect(completed).not.toHaveBeenCalled();
+    context.sources[1]?.emitEnded();
+    await next;
+    expect(completed).toHaveBeenCalledWith("completed");
+  });
+});

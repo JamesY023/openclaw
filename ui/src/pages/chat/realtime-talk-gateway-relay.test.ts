@@ -35,6 +35,13 @@ let audioCurrentTime = 0;
 class MockAudioBufferSource {
   buffer: unknown = null;
   readonly addEventListener = vi.fn();
+  emitEnded(): void {
+    for (const [type, listener] of this.addEventListener.mock.calls) {
+      if (type === "ended") {
+        listener();
+      }
+    }
+  }
   readonly connect = vi.fn();
   readonly start = vi.fn();
   readonly stop = vi.fn();
@@ -1803,5 +1810,217 @@ describe("GatewayRelayRealtimeTalkTransport", () => {
       },
     });
   });
+  /* oxlint-disable max-lines -- TODO: split this grandfathered oversized file. */
+
+  describe("owned relay output playback", () => {
+    const event = (type: string, extra: Record<string, unknown> = {}) =>
+      emitTalkEvent({
+        relaySessionId: "relay-1",
+        type,
+        talkEvent: { turnId: "owned-1" },
+        ...extra,
+      });
+    async function ownedTransport() {
+      const client = createClient();
+      const transport = await createTransport({ client });
+      await startTransport(transport);
+      event("ready", { outputOwnership: "host" });
+      return { client, transport };
+    }
+    it("acknowledges completed only after audioDone and natural drain, even with an early mark", async () => {
+      const { client, transport } = await ownedTransport();
+      event("audio", { audioBase64: "AAAA" });
+      event("mark", { markName: "owned-mark" });
+      audioCurrentTime = 100;
+      await Promise.resolve();
+      expect(client.request).not.toHaveBeenCalledWith(
+        "talk.session.acknowledgeMark",
+        expect.anything(),
+      );
+      createdSources.at(-1)!.emitEnded();
+      await Promise.resolve();
+      expect(client.request).not.toHaveBeenCalledWith(
+        "talk.session.acknowledgeMark",
+        expect.anything(),
+      );
+      event("audioDone");
+      await waitForFast(() =>
+        expect(client.request).toHaveBeenCalledWith("talk.session.acknowledgeMark", {
+          sessionId: "relay-1",
+          markName: "owned-mark",
+          outcome: "completed",
+        }),
+      );
+      transport.stop();
+    });
+    it("reports cancellation without completing and ignores late cancelled audio", async () => {
+      const { client, transport } = await ownedTransport();
+      event("audio", { audioBase64: "AAAA" });
+      event("audioDone");
+      event("mark", { markName: "owned-mark" });
+      const source = createdSources.at(-1)!;
+      source.stop.mockImplementation(() => source.emitEnded());
+      event("clear");
+      await waitForFast(() =>
+        expect(client.request).toHaveBeenCalledWith("talk.session.acknowledgeMark", {
+          sessionId: "relay-1",
+          markName: "owned-mark",
+          outcome: "cancelled",
+        }),
+      );
+      const count = createdSources.length;
+      event("audio", { audioBase64: "AAAA" });
+      event("audioDone");
+      source.emitEnded();
+      expect(createdSources).toHaveLength(count);
+      expect(
+        vi
+          .mocked(client.request)
+          .mock.calls.some(
+            ([, params]) => (params as { outcome?: string })?.outcome === "completed",
+          ),
+      ).toBe(false);
+      pumpMicrophone(new Float32Array([0, 0]));
+      expect(client.request).toHaveBeenCalledWith(
+        "talk.session.appendAudio",
+        expect.anything(),
+        expect.anything(),
+      );
+      transport.stop();
+    });
+    it("keeps microphone input flowing while owned barge-in cancellation is pending", async () => {
+      const { client, transport } = await ownedTransport();
+      vi.mocked(client.request).mockImplementation(async (method) => {
+        if (method === "talk.session.cancelOutput") {
+          return await new Promise(() => {});
+        }
+        return {};
+      });
+      event("audio", { audioBase64: "AAAA" });
+      event("mark", { markName: "owned-mark" });
+      pumpMicrophone(new Float32Array([0.2, 0.2]));
+      pumpMicrophone(new Float32Array([0.2, 0.2]));
+      expect(requestCallsFor(client, "talk.session.cancelOutput")).toHaveLength(1);
+      expect(requestCallsFor(client, "talk.session.appendAudio")).toHaveLength(2);
+      expect(client.request).toHaveBeenCalledWith("talk.session.acknowledgeMark", {
+        sessionId: "relay-1",
+        markName: "owned-mark",
+        outcome: "cancelled",
+      });
+      transport.stop();
+    });
+
+    it("fails an output terminal arriving before any audio and ignores the late frame", async () => {
+      const { client, transport } = await ownedTransport();
+      event("audioDone");
+      event("audio", { audioBase64: "AAAA" });
+      event("mark", { markName: "owned-mark" });
+      expect(createdSources).toHaveLength(0);
+      expect(client.request).toHaveBeenCalledWith("talk.session.acknowledgeMark", {
+        sessionId: "relay-1",
+        markName: "owned-mark",
+        outcome: "failed",
+      });
+      transport.stop();
+    });
+
+    it.each(["malformed", "overflow", "failure"])(
+      "reports %s playback as failed even when the mark arrives later",
+      async (failure) => {
+        const { client, transport } = await ownedTransport();
+        const allocation =
+          failure === "failure"
+            ? vi.spyOn(MockAudioContext.prototype, "createBuffer").mockImplementationOnce(() => {
+                throw new Error("audio unavailable");
+              })
+            : undefined;
+        event("audio", {
+          audioBase64:
+            failure === "malformed"
+              ? "!!!"
+              : failure === "overflow"
+                ? zeroPcmBase64(24000 * 11)
+                : "AAAA",
+        });
+        allocation?.mockRestore();
+        event("mark", { markName: "owned-mark" });
+        event("audioDone");
+        await waitForFast(() =>
+          expect(client.request).toHaveBeenCalledWith("talk.session.acknowledgeMark", {
+            sessionId: "relay-1",
+            markName: "owned-mark",
+            outcome: "failed",
+          }),
+        );
+        transport.stop();
+      },
+    );
+
+    it("retires a clear received before the first audio frame", async () => {
+      const { client, transport } = await ownedTransport();
+      event("clear");
+      event("audio", { audioBase64: "AAAA" });
+      event("mark", { markName: "cancelled-before-audio" });
+      expect(createdSources).toHaveLength(0);
+      expect(client.request).toHaveBeenCalledWith("talk.session.acknowledgeMark", {
+        sessionId: "relay-1",
+        markName: "cancelled-before-audio",
+        outcome: "cancelled",
+      });
+      transport.stop();
+    });
+
+    it("retires an unseen canceled turn without stopping the active replacement", async () => {
+      const { client, transport } = await ownedTransport();
+      event("audio", { talkEvent: { turnId: "owned-2" }, audioBase64: "AAAA" });
+      const replacement = createdSources.at(-1)!;
+      event("clear");
+      event("audio", { audioBase64: "AAAA" });
+      event("mark", { markName: "cancelled-before-audio" });
+      expect(createdSources).toHaveLength(1);
+      expect(replacement.stop).not.toHaveBeenCalled();
+      expect(client.request).toHaveBeenCalledWith("talk.session.acknowledgeMark", {
+        sessionId: "relay-1",
+        markName: "cancelled-before-audio",
+        outcome: "cancelled",
+      });
+      transport.stop();
+    });
+
+    it("does not let old audio, marks or ended events complete replacement playback", async () => {
+      const { client, transport } = await ownedTransport();
+      event("audio", { audioBase64: "AAAA" });
+      event("audioDone");
+      const oldSource = createdSources.at(-1)!;
+      event("audio", { talkEvent: { turnId: "owned-2" }, audioBase64: "AAAA" });
+      event("audioDone", { talkEvent: { turnId: "owned-2" } });
+      event("mark", { talkEvent: { turnId: "owned-2" }, markName: "replacement-mark" });
+      event("mark", { markName: "old-mark" });
+      event("audio", { audioBase64: "AAAA" });
+      oldSource.emitEnded();
+      await Promise.resolve();
+      expect(createdSources).toHaveLength(2);
+      expect(client.request).toHaveBeenCalledWith("talk.session.acknowledgeMark", {
+        sessionId: "relay-1",
+        markName: "old-mark",
+        outcome: "cancelled",
+      });
+      expect(
+        vi
+          .mocked(client.request)
+          .mock.calls.some(
+            ([, params]) => (params as { outcome?: string })?.outcome === "completed",
+          ),
+      ).toBe(false);
+      createdSources.at(-1)!.emitEnded();
+      await waitForFast(() =>
+        expect(client.request).toHaveBeenCalledWith("talk.session.acknowledgeMark", {
+          sessionId: "relay-1",
+          markName: "replacement-mark",
+          outcome: "completed",
+        }),
+      );
+      transport.stop();
+    });
+  });
 });
-/* oxlint-disable max-lines -- TODO: split this grandfathered oversized file. */

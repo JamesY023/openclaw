@@ -11,6 +11,7 @@ import {
   type RealtimeTalkAudioFrame,
 } from "./realtime-talk-audio.ts";
 import type { DelayedToolResult, GatewayRelayEvent } from "./realtime-talk-gateway-relay-types.ts";
+import { RealtimeTalkOwnedOutput } from "./realtime-talk-owned-output.ts";
 import {
   REALTIME_VOICE_AGENT_CONSULT_TOOL_NAME,
   REALTIME_VOICE_AGENT_CONTROL_TOOL_NAME,
@@ -53,6 +54,15 @@ export class GatewayRelayRealtimeTalkTransport implements RealtimeTalkTransport 
   private audioAppendAbortController: AbortController | null = null;
   private readonly pendingAudioAppends = new Set<Promise<unknown>>();
   private readonly outputQueue = new RealtimeTalkPcmOutputQueue();
+  private outputOwnership: "host" | "provider" = "provider";
+  private readonly ownedOutput = new RealtimeTalkOwnedOutput({
+    client: this.ctx.client,
+    sessionId: this.session.relaySessionId,
+    drain: () => this.outputQueue.drain(),
+    stop: () => this.stopOutput({ releaseDelayedToolResults: false }),
+    reportError: (error) => this.reportToolResultSubmissionError(error),
+    stopSession: () => this.stop(),
+  });
   private readonly toolAbortControllers = new Map<string, AbortController>();
   private readonly completedToolCalls = new Set<string>();
   private readonly submittingToolCalls = new Set<string>();
@@ -154,6 +164,7 @@ export class GatewayRelayRealtimeTalkTransport implements RealtimeTalkTransport 
   }
 
   private stopLocal(): void {
+    this.ownedOutput.close();
     this.closed = true;
     this.input.stop();
     this.activated = false;
@@ -188,12 +199,16 @@ export class GatewayRelayRealtimeTalkTransport implements RealtimeTalkTransport 
         return;
       }
       if (this.detectBargeInSpeech(samples)) {
-        this.cancelOutputForBargeIn();
+        this.cancelOutput("barge-in");
       }
       const abortController = this.audioAppendAbortController;
       // Live microphone frames become stale once the Gateway falls behind, so fail at
       // the ownership cap instead of silently dropping speech or growing a latency queue.
-      if (!abortController || abortController.signal.aborted || this.pendingOutputCancellations) {
+      if (
+        !abortController ||
+        abortController.signal.aborted ||
+        (this.pendingOutputCancellations > 0 && this.outputOwnership !== "host")
+      ) {
         return;
       }
       if (this.pendingAudioAppends.size >= MAX_PENDING_AUDIO_APPENDS) {
@@ -295,6 +310,7 @@ export class GatewayRelayRealtimeTalkTransport implements RealtimeTalkTransport 
       }
       switch (event.type) {
         case "ready":
+          this.outputOwnership = event.outputOwnership ?? "provider";
           this.ctx.callbacks.onStatus?.("listening");
           return;
         case "audio":
@@ -308,14 +324,26 @@ export class GatewayRelayRealtimeTalkTransport implements RealtimeTalkTransport 
               this.stop();
               return;
             }
+            if (this.outputOwnership === "host" && !this.ownedOutput.begin(turnId)) {
+              return;
+            }
             this.activeOutputTurnId = turnId;
             this.cancelRequestedForPlayback = false;
             this.speechFramesDuringPlayback = 0;
             this.playPcm16(event.audioBase64);
           }
           return;
+        case "audioDone":
+          if (this.outputOwnership === "host") {
+            this.ownedOutput.done(event.talkEvent?.turnId);
+          }
+          return;
         case "clear":
-          if (event.talkEvent?.turnId && event.talkEvent.turnId !== this.activeOutputTurnId) {
+          if (
+            this.outputOwnership === "host"
+              ? !this.ownedOutput.clear(event.talkEvent?.turnId)
+              : event.talkEvent?.turnId && event.talkEvent.turnId !== this.outputTurnId
+          ) {
             return;
           }
           this.playbackOverflowed = false;
@@ -326,7 +354,9 @@ export class GatewayRelayRealtimeTalkTransport implements RealtimeTalkTransport 
           }
           return;
         case "mark":
-          if (event.markName) {
+          if (this.outputOwnership === "host") {
+            this.ownedOutput.mark(event);
+          } else if (event.markName) {
             this.scheduleMarkAck(event.markName);
           }
           return;
@@ -374,13 +404,16 @@ export class GatewayRelayRealtimeTalkTransport implements RealtimeTalkTransport 
     }
   }
 
+  private get outputTurnId(): string | null {
+    return this.outputOwnership === "host" ? this.ownedOutput.turnId : this.activeOutputTurnId;
+  }
+
   private playPcm16(base64: string): void {
-    const result = this.outputQueue.play(
-      base64,
-      this.outputContext,
-      this.session.audio.outputSampleRateHz,
-    );
-    if (result === "overflow") {
+    const play = () =>
+      this.outputQueue.play(base64, this.outputContext, this.session.audio.outputSampleRateHz);
+    if (this.outputOwnership === "host" && this.outputTurnId) {
+      this.ownedOutput.play(this.outputTurnId, play);
+    } else if (play() === "overflow") {
       this.playbackOverflowed = true;
       this.cancelOutput("playback-overflow", false);
     }
@@ -647,30 +680,24 @@ export class GatewayRelayRealtimeTalkTransport implements RealtimeTalkTransport 
 
   private isFinalToolResult(event: GatewayRelayEvent): boolean {
     const talkEvent = event.talkEvent;
-    if (talkEvent?.type === "tool.progress") {
-      return false;
-    }
-    if (talkEvent?.type === "tool.result" && talkEvent.final === false) {
-      return false;
-    }
-    return true;
-  }
-
-  private cancelOutputForBargeIn(): void {
-    this.cancelOutput("barge-in");
+    return (
+      talkEvent?.type !== "tool.progress" &&
+      (talkEvent?.type !== "tool.result" || talkEvent.final !== false)
+    );
   }
 
   private cancelOutput(reason: string, requirePlayback = true): void {
     if ((requirePlayback && !this.outputQueue.isPlaying) || this.cancelRequestedForPlayback) {
       return;
     }
-    const turnId = this.activeOutputTurnId;
+    const turnId = this.outputTurnId;
     if (!turnId) {
       this.ctx.callbacks.onStatus?.("error", t("chat.composer.realtimeTalkMissingTurnIdentity"));
       this.stop();
       return;
     }
     this.cancelRequestedForPlayback = true;
+    this.ownedOutput.finish(turnId, reason === "playback-overflow" ? "failed" : "cancelled");
     // Keep completed consult results until the Gateway records this cancellation.
     // Releasing earlier can let the provider answer from a turn the user interrupted.
     this.pendingOutputCancellations += 1;

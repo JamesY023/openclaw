@@ -1,3 +1,4 @@
+import { createDeferredCore } from "../../../../src/shared/deferred.js";
 // Control UI chat module implements realtime talk audio behavior.
 export function bytesToBase64(bytes: Uint8Array): string {
   let binary = "";
@@ -229,6 +230,9 @@ type RealtimeTalkPcmOutputQueuePlayResult = "queued" | "ignored" | "overflow";
 export class RealtimeTalkPcmOutputQueue {
   private playhead = 0;
   private readonly sources = new Set<AudioBufferSourceNode>();
+  private pendingDrain:
+    | ReturnType<typeof createDeferredCore<"completed" | "cancelled">>
+    | undefined;
 
   get queuedUntil(): number {
     return this.playhead;
@@ -278,7 +282,13 @@ export class RealtimeTalkPcmOutputQueue {
     buffer.getChannelData(0).set(samples);
     const source = outputContext.createBufferSource();
     this.sources.add(source);
-    source.addEventListener("ended", () => this.sources.delete(source));
+    source.addEventListener("ended", () => {
+      if (this.sources.delete(source) && this.sources.size === 0) {
+        const drain = this.pendingDrain;
+        this.pendingDrain = undefined;
+        drain?.resolve("completed");
+      }
+    });
     source.buffer = buffer;
     source.connect(outputContext.destination);
     source.start(startAt);
@@ -286,9 +296,20 @@ export class RealtimeTalkPcmOutputQueue {
     return "queued";
   }
 
+  drain(): Promise<"completed" | "cancelled"> {
+    if (this.sources.size === 0) {
+      return Promise.resolve("completed");
+    }
+    this.pendingDrain ??= createDeferredCore<"completed" | "cancelled">();
+    return this.pendingDrain.promise;
+  }
+
   stop(outputContext: AudioContext | null): void {
     // Release ownership first so synchronous or late `ended` events from stopped
     // sources cannot affect audio queued by a replacement playback turn.
+    const drain = this.pendingDrain;
+    this.pendingDrain = undefined;
+    drain?.resolve("cancelled");
     const sources = [...this.sources];
     this.sources.clear();
     this.playhead = outputContext?.currentTime ?? 0;

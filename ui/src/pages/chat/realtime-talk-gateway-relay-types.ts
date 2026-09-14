@@ -4,8 +4,9 @@ export type GatewayRelayEvent = {
   relaySessionId?: string;
   talkEvent?: RealtimeTalkEvent;
 } & (
-  | { type?: "ready" }
+  | { type?: "ready"; outputOwnership?: "host" | "provider" }
   | { type?: "audio"; audioBase64?: string }
+  | { type?: "audioDone" }
   | { type?: "clear"; reason?: "barge-in" }
   | { type?: "mark"; markName?: string }
   | {
