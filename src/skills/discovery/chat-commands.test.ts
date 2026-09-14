@@ -133,10 +133,6 @@ function buildWorkspaceSkillCommandSpecs(
   });
 }
 
-vi.mock("../../auto-reply/commands-registry.data.js", () => ({
-  getChatCommands: () => [],
-}));
-
 vi.mock("./command-specs.js", () => ({
   buildWorkspaceSkillCommandSpecs,
 }));
@@ -187,6 +183,59 @@ beforeEach(() => {
 });
 
 describe("resolveSkillCommandInvocation", () => {
+  it.each(["/email-triage", "/EMAIL-TRIAGE", "/email_triage", "/skill email-triage"])(
+    "resolves %s without changing request arguments",
+    (prefix) => {
+      const command = { name: "email_triage", skillName: "email-triage", description: "Triage" };
+      expect(
+        resolveSkillCommandInvocation({
+          commandBodyNormalized: ` ${prefix} last 2 days\nkeep  spacing `,
+          skillCommands: [command],
+        }),
+      ).toEqual({ command, args: "last 2 days\nkeep  spacing" });
+    },
+  );
+
+  it("keeps exact commands and native built-ins ahead of skill aliases", () => {
+    const alias = { name: "managed_triage", skillName: "email-triage", description: "Alias" };
+    const exact = { name: "email_triage", skillName: "triage", description: "Exact" };
+    expect(
+      resolveSkillCommandInvocation({
+        commandBodyNormalized: "/email_triage report",
+        skillCommands: [alias, exact],
+      }),
+    ).toEqual({ command: exact, args: "report" });
+    const help = { name: "help_2", skillName: "help", description: "Custom help" };
+    expect(
+      resolveSkillCommandInvocation({
+        commandBodyNormalized: "/help report",
+        skillCommands: [help],
+      }),
+    ).toBeNull();
+    expect(
+      resolveSkillCommandInvocation({
+        commandBodyNormalized: "/skill help report",
+        skillCommands: [help],
+      }),
+    ).toEqual({ command: help, args: "report" });
+  });
+
+  it("expands hyphenated aliases and rejects skills unavailable to the agent", () => {
+    const command = { name: "email_triage", skillName: "email-triage", description: "Triage" };
+    const text = "/email-triage last 2 days report";
+    const expanded = expandExplicitSkillReferences({ text, skillCommands: [command] });
+    expect(expanded.skills).toEqual([command]);
+    expect(expanded.body.endsWith(text)).toBe(true);
+    expect(
+      expandExplicitSkillReferences({ text, skillCommands: [], allSkillCommands: [command] }),
+    ).toEqual({
+      body: text,
+      skills: [],
+      error:
+        'Skill "email-triage" is not available for this agent. Update the skill allowlist or choose an allowed skill.',
+    });
+  });
+
   it("keeps a renamed dashboard skill addressable through /skill and $ references", () => {
     const dashboard = {
       name: "dashboard_2",

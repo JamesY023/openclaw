@@ -165,9 +165,13 @@ export function resolveSkillCommandInvocation(params: {
       const args = skillMatch[2]?.trim();
       return { command: skillCommand, args: args || undefined };
     }
-    const command = params.skillCommands.find(
-      (entry) => normalizeOptionalLowercaseString(entry.name) === commandName,
-    );
+    const command =
+      params.skillCommands.find(
+        (entry) => normalizeOptionalLowercaseString(entry.name) === commandName,
+      ) ??
+      (listReservedChatSlashCommandNames().has(commandName)
+        ? undefined
+        : findSkillCommand(params.skillCommands, commandName));
     if (command) {
       const args = match[2]?.trim();
       return { command, args: args || undefined };
