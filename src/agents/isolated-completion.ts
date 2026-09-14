@@ -561,7 +561,7 @@ async function runIsolatedCompletionOwned(
             allowKeychainPrompt: false,
             config,
           });
-          const authAttempts = prepareAgentRuntimeAuth({
+          const { attempts: authAttempts } = await prepareAgentRuntimeAuth({
             provider: runtimeModel.provider,
             modelId: runtimeModel.id,
             modelApi: runtimeModel.api,
@@ -574,7 +574,7 @@ async function runIsolatedCompletionOwned(
             harnessId: harness.id,
             harnessRuntime: harness.id,
             harnessAuthBootstrap: harness.authBootstrap,
-          }).attempts;
+          });
           harnessAuth = { model: runtimeModel, store: authProfileStore, attempts: authAttempts };
         }
         let firstError: unknown;

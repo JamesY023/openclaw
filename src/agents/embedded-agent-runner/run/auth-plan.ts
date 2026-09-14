@@ -153,7 +153,7 @@ export async function prepareEmbeddedRunAuthPlan(params: {
     externalCliAuthScope.ignoreAutoPreferredProfile && !lockedProfileId
       ? undefined
       : requestedProfileId;
-  const createAuthPreparation = (): PreparedAgentRuntimeAuth => {
+  const createAuthPreparation = async (): Promise<PreparedAgentRuntimeAuth> => {
     const harness = params.getAgentHarness();
     if (params.nativeSessionRuntime?.auth === "native") {
       // Only the binding-owned connection bypasses host credentials and routes;
@@ -237,7 +237,7 @@ export async function prepareEmbeddedRunAuthPlan(params: {
         }),
     });
 
-  let resolvedAuthPreparation = createAuthPreparation();
+  let resolvedAuthPreparation = await createAuthPreparation();
   let preparedAuthAttempts = resolvedAuthPreparation.attempts;
   let activePreparedAuthPlan = resolvedAuthPreparation.plan;
   params.applyResolvedRuntimeModel(await materializeAuthPlan(activePreparedAuthPlan));
@@ -249,7 +249,7 @@ export async function prepareEmbeddedRunAuthPlan(params: {
   );
   if (finalizedHarness.id !== params.getAgentHarness().id) {
     params.setAgentHarness(finalizedHarness);
-    resolvedAuthPreparation = createAuthPreparation();
+    resolvedAuthPreparation = await createAuthPreparation();
     preparedAuthAttempts = resolvedAuthPreparation.attempts;
     activePreparedAuthPlan = resolvedAuthPreparation.plan;
     params.applyResolvedRuntimeModel(await materializeAuthPlan(activePreparedAuthPlan));

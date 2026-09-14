@@ -16,3 +16,5 @@ export function registerCodexManagedAppServerDoctorChecks(host: {
 }): void {
   registerChecks({ ...host, pluginRoot: CODEX_PLUGIN_ROOT });
 }
+
+export { readCodexProfileRateLimits } from "./src/app-server/usage.js";

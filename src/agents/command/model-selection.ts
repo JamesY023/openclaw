@@ -473,19 +473,11 @@ export async function resolveEmbeddedModelSelection(params: {
       agentId: params.sessionAgentId,
       sessionKey: params.sessionKey,
     });
-    const authAliasLookupParams = params.pluginsEnabled
-      ? {
-          config: authConfig,
-          workspaceDir: params.workspaceDir,
-          ...(params.manifestMetadataSnapshot
-            ? { metadataSnapshot: params.manifestMetadataSnapshot }
-            : {}),
-        }
-      : {
-          config: authConfig,
-          workspaceDir: params.workspaceDir,
-          metadataSnapshot: { plugins: [] },
-        };
+    const authAliasLookupParams = {
+      config: authConfig,
+      workspaceDir: params.workspaceDir,
+      metadataSnapshot: params.pluginsEnabled ? params.manifestMetadataSnapshot : { plugins: [] },
+    };
     const acceptedAuthProviders = listOpenAIAuthProfileProvidersForAgentRuntime({
       provider: providerForAuthProfileValidation,
       harnessRuntime: validationHarnessPolicy.runtime,
@@ -514,6 +506,14 @@ export async function resolveEmbeddedModelSelection(params: {
       provider: providerForAuthProfileValidation,
       metadataSnapshot: params.pluginsEnabled ? params.manifestMetadataSnapshot : { plugins: [] },
     });
+    if (
+      !profileMatchesRuntime &&
+      authProfileId === "openai:account-88121327-b5c0-4e19-aa7c-e2e6abd2f76b" &&
+      (entry.authProfileOverrideSource === "user" ||
+        entry.authProfileOverrideSource === "user-link")
+    ) {
+      throw new Error("fixture-only: acceptance login unavailable; live not run");
+    }
     if (!profileMatchesRuntime && !preserveUnavailableSelection) {
       if (hasExplicitRunOverride || autoFallbackPrimaryProbe) {
         sessionEntryForAttempt = {

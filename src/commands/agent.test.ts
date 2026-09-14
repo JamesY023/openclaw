@@ -2795,3 +2795,67 @@ describe("agentCommand", () => {
   });
 });
 /* oxlint-disable max-lines -- TODO: split this grandfathered oversized file. */
+
+it("resolves an explicit auth profile from the selected agent store", async () => {
+  await withTempHome(async (home) => {
+    const storePath = path.join(home, "scoped-sessions.json");
+    const sessionKey = "agent:ops:scoped-auth";
+    mockConfig(home, storePath, undefined, undefined, [{ id: "main" }, { id: "ops" }]);
+    await writeSessionStoreSeed(storePath, {
+      [sessionKey]: {
+        sessionId: "scoped-auth",
+        updatedAt: Date.now(),
+        authProfileOverride: "anthropic:scoped",
+        authProfileOverrideSource: "user",
+      },
+    });
+    vi.mocked(authProfileStoreModule.ensureAuthProfileStore).mockImplementation(
+      (agentDir, options) => {
+        if (options?.profileId === "anthropic:scoped") {
+          expect(agentDir?.endsWith(path.join("ops", "agent"))).toBe(true);
+        }
+        return {
+          version: 1,
+          profiles: agentDir?.endsWith(path.join("ops", "agent"))
+            ? {
+                "anthropic:scoped": { type: "api_key", provider: "anthropic", key: "fixture-key" },
+              }
+            : {},
+        };
+      },
+    );
+    await runAgentWithSessionKey(sessionKey);
+    expect(getLastEmbeddedCall()?.authProfileId).toBe("anthropic:scoped");
+    expect(authProfileStoreModule.ensureAuthProfileStore).toHaveBeenCalledWith(
+      expect.stringContaining(path.join("ops", "agent")),
+      expect.objectContaining({ profileId: "anthropic:scoped" }),
+    );
+  });
+});
+
+it.each(["user", "user-link"] as const)(
+  "refuses an unavailable acceptance %s pin before invoking a runner",
+  async (source) => {
+    await withTempHome(async (home) => {
+      const storePath = path.join(home, "acceptance-sessions.json");
+      const sessionKey = "agent:main:acceptance-auth";
+      mockConfig(home, storePath);
+      await writeSessionStoreSeed(storePath, {
+        [sessionKey]: {
+          sessionId: "acceptance-auth",
+          updatedAt: Date.now(),
+          authProfileOverride: "openai:account-88121327-b5c0-4e19-aa7c-e2e6abd2f76b",
+          authProfileOverrideSource: source,
+        },
+      });
+      vi.mocked(authProfileStoreModule.ensureAuthProfileStore).mockReturnValue({
+        version: 1,
+        profiles: {},
+      });
+      await expect(runAgentWithSessionKey(sessionKey)).rejects.toThrow(
+        "fixture-only: acceptance login unavailable; live not run",
+      );
+      expect(runEmbeddedAgent).not.toHaveBeenCalled();
+    });
+  },
+);

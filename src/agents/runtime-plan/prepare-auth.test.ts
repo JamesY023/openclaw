@@ -22,8 +22,8 @@ vi.mock("../../plugins/provider-runtime.js", () => ({
   shouldDeferProviderSyntheticProfileAuthWithPlugin: () => undefined,
 }));
 
-function prepareAgentRuntimeAuthPlan(params: Parameters<typeof prepareAgentRuntimeAuth>[0]) {
-  return prepareAgentRuntimeAuth(params).plan;
+async function prepareAgentRuntimeAuthPlan(params: Parameters<typeof prepareAgentRuntimeAuth>[0]) {
+  return (await prepareAgentRuntimeAuth(params)).plan;
 }
 
 function authStore(
@@ -127,7 +127,7 @@ function allCooldownOpenAIStore(): AuthProfileStore {
 }
 
 describe("prepareAgentRuntimeAuthPlan", () => {
-  it("keeps a materialized model endpoint on its own credential provider", () => {
+  it("keeps a materialized model endpoint on its own credential provider", async () => {
     const config: OpenClawConfig = {
       models: {
         providers: {
@@ -146,7 +146,7 @@ describe("prepareAgentRuntimeAuthPlan", () => {
         },
       ],
     });
-    const plan = prepareAgentRuntimeAuthPlan({
+    const plan = await prepareAgentRuntimeAuthPlan({
       provider: "arcee",
       modelId: "trinity-large-thinking",
       modelApi: "openai-completions",
@@ -165,8 +165,8 @@ describe("prepareAgentRuntimeAuthPlan", () => {
     expect(config.models?.providers?.arcee?.baseUrl).toBe("https://openrouter.ai/api/v1");
   });
 
-  it("carries prepared provider aliases into generic auth planning", () => {
-    const plan = prepareAgentRuntimeAuthPlan({
+  it("carries prepared provider aliases into generic auth planning", async () => {
+    const plan = await prepareAgentRuntimeAuthPlan({
       provider: "legacy-provider",
       modelId: "model",
       env: {},
@@ -185,8 +185,8 @@ describe("prepareAgentRuntimeAuthPlan", () => {
     expect(plan.providerForAuth).toBe("canonical-provider");
   });
 
-  it("keeps unknown no-observation models on the legacy auth plan", () => {
-    const plan = prepareAgentRuntimeAuthPlan({
+  it("keeps unknown no-observation models on the legacy auth plan", async () => {
+    const plan = await prepareAgentRuntimeAuthPlan({
       provider: "openai",
       modelId: "gpt-5.4-nano",
       env: {},
@@ -203,8 +203,8 @@ describe("prepareAgentRuntimeAuthPlan", () => {
     expect(plan.deferredRouteSupport).toBeUndefined();
   });
 
-  it("keeps a generic provider-entry binding ahead of an automatic backup", () => {
-    const plan = prepareAgentRuntimeAuthPlan({
+  it("keeps a generic provider-entry binding ahead of an automatic backup", async () => {
+    const plan = await prepareAgentRuntimeAuthPlan({
       provider: "xai",
       modelId: "grok-4",
       config: providerConfig("xai", { apiKey: "xai:bound" }),
@@ -230,7 +230,7 @@ describe("prepareAgentRuntimeAuthPlan", () => {
     expect(plan.modelRoute).toBeUndefined();
   });
 
-  it("rejects a cooldowned generic provider-entry binding instead of using a backup", () => {
+  it("rejects a cooldowned generic provider-entry binding instead of using a backup", async () => {
     const store = authStore(
       {
         "xai:bound": apiKeyProfile("xai", "bound-key"),
@@ -240,21 +240,22 @@ describe("prepareAgentRuntimeAuthPlan", () => {
     );
     setProfileCooldown(store, "xai:bound");
 
-    expect(() =>
-      prepareAgentRuntimeAuthPlan({
-        provider: "xai",
-        modelId: "grok-4",
-        config: providerConfig("xai", { apiKey: "xai:bound" }),
-        env: {},
-        authProfileStore: store,
-        sessionAuthProfileId: "xai:backup",
-        sessionAuthProfileSource: "auto",
-      }),
-    ).toThrow(/temporarily unavailable/u);
+    await expect(
+      async () =>
+        await prepareAgentRuntimeAuthPlan({
+          provider: "xai",
+          modelId: "grok-4",
+          config: providerConfig("xai", { apiKey: "xai:bound" }),
+          env: {},
+          authProfileStore: store,
+          sessionAuthProfileId: "xai:backup",
+          sessionAuthProfileSource: "auto",
+        }),
+    ).rejects.toThrow(/temporarily unavailable/u);
   });
 
-  it("keeps generic AWS SDK auth ahead of provider bindings and automatic profiles", () => {
-    const plan = prepareAgentRuntimeAuthPlan({
+  it("keeps generic AWS SDK auth ahead of provider bindings and automatic profiles", async () => {
+    const plan = await prepareAgentRuntimeAuthPlan({
       provider: "xai",
       modelId: "grok-4",
       config: providerConfig("xai", { auth: "aws-sdk", apiKey: "xai:bound" }),
@@ -278,7 +279,7 @@ describe("prepareAgentRuntimeAuthPlan", () => {
     expect(plan.modelRoute).toBeUndefined();
   });
 
-  it("rotates a generic automatic profile past a model cooldown", () => {
+  it("rotates a generic automatic profile past a model cooldown", async () => {
     const store = authStore(
       {
         "xai:p1": apiKeyProfile("xai", "p1-key"),
@@ -292,7 +293,7 @@ describe("prepareAgentRuntimeAuthPlan", () => {
       cooldownModel: "grok-4",
     });
 
-    const plan = prepareAgentRuntimeAuthPlan({
+    const plan = await prepareAgentRuntimeAuthPlan({
       provider: "xai",
       modelId: "grok-4",
       env: {},
@@ -310,8 +311,8 @@ describe("prepareAgentRuntimeAuthPlan", () => {
     expect(plan.modelRoute).toBeUndefined();
   });
 
-  it("applies a provider-owned preferred profile without turning it into a lock", () => {
-    const plan = prepareAgentRuntimeAuthPlan({
+  it("applies a provider-owned preferred profile without turning it into a lock", async () => {
+    const plan = await prepareAgentRuntimeAuthPlan({
       provider: "xai",
       modelId: "grok-4",
       env: {},
@@ -332,8 +333,8 @@ describe("prepareAgentRuntimeAuthPlan", () => {
     });
   });
 
-  it("drops proven-unavailable generic candidates before forwarding fallbacks", () => {
-    const plan = prepareAgentRuntimeAuthPlan({
+  it("drops proven-unavailable generic candidates before forwarding fallbacks", async () => {
+    const plan = await prepareAgentRuntimeAuthPlan({
       provider: "xai",
       modelId: "grok-4",
       config: {
@@ -367,7 +368,7 @@ describe("prepareAgentRuntimeAuthPlan", () => {
     });
   });
 
-  it("fails closed before resolving an all-cooldown generic order", () => {
+  it("fails closed before resolving an all-cooldown generic order", async () => {
     const store = authStore(
       {
         "xai:p1": apiKeyProfile("xai", "p1-key"),
@@ -378,51 +379,54 @@ describe("prepareAgentRuntimeAuthPlan", () => {
     setProfileCooldown(store, "xai:p1");
     store.usageStats!["xai:p2"] = { cooldownUntil: Date.now() + 60_000 };
 
-    expect(() =>
-      prepareAgentRuntimeAuthPlan({
-        provider: "xai",
-        modelId: "grok-4",
-        env: {},
-        authProfileStore: store,
-        sessionAuthProfileId: "xai:p1",
-        sessionAuthProfileSource: "auto",
-      }),
-    ).toThrow(/temporarily unavailable/u);
-  });
-
-  it("fails closed when an explicit generic order contains only missing profiles", () => {
-    expect(() =>
-      prepareAgentRuntimeAuthPlan({
-        provider: "xai",
-        modelId: "grok-4",
-        config: {
-          auth: { order: { xai: ["xai:missing"] } },
-        } as OpenClawConfig,
-        env: {},
-        authProfileStore: authStore({
-          "xai:backup": apiKeyProfile("xai", "backup-key"),
+    await expect(
+      async () =>
+        await prepareAgentRuntimeAuthPlan({
+          provider: "xai",
+          modelId: "grok-4",
+          env: {},
+          authProfileStore: store,
+          sessionAuthProfileId: "xai:p1",
+          sessionAuthProfileSource: "auto",
         }),
-      }),
-    ).toThrow(/explicit auth order.*no usable profiles/iu);
+    ).rejects.toThrow(/temporarily unavailable/u);
   });
 
-  it("fails closed when an explicit generic order is empty", () => {
-    expect(() =>
-      prepareAgentRuntimeAuthPlan({
-        provider: "xai",
-        modelId: "grok-4",
-        config: {
-          auth: { order: { xai: [] } },
-        } as OpenClawConfig,
-        env: {},
-        authProfileStore: authStore({
-          "xai:backup": apiKeyProfile("xai", "backup-key"),
+  it("fails closed when an explicit generic order contains only missing profiles", async () => {
+    await expect(
+      async () =>
+        await prepareAgentRuntimeAuthPlan({
+          provider: "xai",
+          modelId: "grok-4",
+          config: {
+            auth: { order: { xai: ["xai:missing"] } },
+          } as OpenClawConfig,
+          env: {},
+          authProfileStore: authStore({
+            "xai:backup": apiKeyProfile("xai", "backup-key"),
+          }),
         }),
-      }),
-    ).toThrow(/explicit auth order.*no usable profiles/iu);
+    ).rejects.toThrow(/explicit auth order.*no usable profiles/iu);
   });
 
-  it("skips a cooldowned user pin and selects the next same-provider profile", () => {
+  it("fails closed when an explicit generic order is empty", async () => {
+    await expect(
+      async () =>
+        await prepareAgentRuntimeAuthPlan({
+          provider: "xai",
+          modelId: "grok-4",
+          config: {
+            auth: { order: { xai: [] } },
+          } as OpenClawConfig,
+          env: {},
+          authProfileStore: authStore({
+            "xai:backup": apiKeyProfile("xai", "backup-key"),
+          }),
+        }),
+    ).rejects.toThrow(/explicit auth order.*no usable profiles/iu);
+  });
+
+  it("skips a cooldowned user pin and selects the next same-provider profile", async () => {
     const store = authStore(
       {
         "xai:p1": apiKeyProfile("xai", "p1-key"),
@@ -432,7 +436,7 @@ describe("prepareAgentRuntimeAuthPlan", () => {
     );
     setProfileCooldown(store, "xai:p1");
 
-    const plan = prepareAgentRuntimeAuthPlan({
+    const plan = await prepareAgentRuntimeAuthPlan({
       provider: "xai",
       modelId: "grok-4",
       env: {},
@@ -449,8 +453,8 @@ describe("prepareAgentRuntimeAuthPlan", () => {
     });
   });
 
-  it("prepares a user pin first and retains same-provider profile fallbacks", () => {
-    const prepared = prepareAgentRuntimeAuth({
+  it("prepares a user pin first and retains same-provider profile fallbacks", async () => {
+    const prepared = await prepareAgentRuntimeAuth({
       provider: "xai",
       modelId: "grok-4",
       env: {},
@@ -473,7 +477,7 @@ describe("prepareAgentRuntimeAuthPlan", () => {
     ]);
   });
 
-  it("prepares an automatic pending OAuth fence for runtime settlement", () => {
+  it("prepares an automatic pending OAuth fence for runtime settlement", async () => {
     const pendingProfileId = "xai:pending";
     const backupProfileId = "xai:backup";
     const pending = createOAuthRefreshFence({
@@ -487,7 +491,7 @@ describe("prepareAgentRuntimeAuthPlan", () => {
       },
     });
 
-    const prepared = prepareAgentRuntimeAuth({
+    const prepared = await prepareAgentRuntimeAuth({
       provider: "xai",
       modelId: "grok-4",
       env: {},
@@ -507,7 +511,7 @@ describe("prepareAgentRuntimeAuthPlan", () => {
     ).toEqual([pendingProfileId, backupProfileId]);
   });
 
-  it("keeps a user-pinned pending OAuth fence ahead of ordered siblings", () => {
+  it("keeps a user-pinned pending OAuth fence ahead of ordered siblings", async () => {
     const pendingProfileId = "xai:pending";
     const backupProfileId = "xai:backup";
     const pending = createOAuthRefreshFence({
@@ -521,7 +525,7 @@ describe("prepareAgentRuntimeAuthPlan", () => {
       },
     });
 
-    const prepared = prepareAgentRuntimeAuth({
+    const prepared = await prepareAgentRuntimeAuth({
       provider: "xai",
       modelId: "grok-4",
       env: {},
@@ -543,8 +547,8 @@ describe("prepareAgentRuntimeAuthPlan", () => {
     ).toEqual([pendingProfileId, backupProfileId]);
   });
 
-  it("defers an ambiguous route when native Codex owns auth", () => {
-    const plan = prepareAgentRuntimeAuthPlan({
+  it("defers an ambiguous route when native Codex owns auth", async () => {
+    const plan = await prepareAgentRuntimeAuthPlan({
       ...openAIChatGptAuthFixture(),
       env: {},
       harnessId: "codex",
@@ -563,8 +567,8 @@ describe("prepareAgentRuntimeAuthPlan", () => {
     expect(resolveAgentHarnessPreparedAuthSupport({ plan })).toEqual({ source: "harness" });
   });
 
-  it("falls through an unusable env marker to an ordered API-key profile", () => {
-    const plan = prepareAgentRuntimeAuthPlan({
+  it("falls through an unusable env marker to an ordered API-key profile", async () => {
+    const plan = await prepareAgentRuntimeAuthPlan({
       ...openAIPlatformAuthFixture(),
       config: openAIConfig({ apiKey: "OPENAI_API_KEY" }),
       env: {},
@@ -582,20 +586,21 @@ describe("prepareAgentRuntimeAuthPlan", () => {
     expect(plan.modelRoute?.authRequirement).toBe("api-key");
   });
 
-  it("rejects a concrete route when an env marker has no usable credential", () => {
-    expect(() =>
-      prepareAgentRuntimeAuthPlan({
-        ...openAIPlatformAuthFixture(),
-        config: openAIConfig({ apiKey: "OPENAI_API_KEY" }),
-        env: {},
-        harnessId: "codex",
-        harnessRuntime: "codex",
-        authProfileStore: authStore({}),
-      }),
-    ).toThrow(/No route-compatible authentication source/u);
+  it("rejects a concrete route when an env marker has no usable credential", async () => {
+    await expect(
+      async () =>
+        await prepareAgentRuntimeAuthPlan({
+          ...openAIPlatformAuthFixture(),
+          config: openAIConfig({ apiKey: "OPENAI_API_KEY" }),
+          env: {},
+          harnessId: "codex",
+          harnessRuntime: "codex",
+          authProfileStore: authStore({}),
+        }),
+    ).rejects.toThrow(/No route-compatible authentication source/u);
   });
 
-  it("skips cooldowned automatic profiles before selecting a healthy backup", () => {
+  it("skips cooldowned automatic profiles before selecting a healthy backup", async () => {
     const store = authStore(
       {
         "openai:cooldown": openAIApiKeyProfile("cooldown-key"),
@@ -605,7 +610,7 @@ describe("prepareAgentRuntimeAuthPlan", () => {
     );
     setProfileCooldown(store, "openai:cooldown");
 
-    const plan = prepareAgentRuntimeAuthPlan({
+    const plan = await prepareAgentRuntimeAuthPlan({
       ...codexPlatformAuthFixture(),
       authProfileStore: store,
       sessionAuthProfileId: "openai:cooldown",
@@ -616,20 +621,21 @@ describe("prepareAgentRuntimeAuthPlan", () => {
     expect(plan.forwardedAuthProfileCandidateIds).toEqual(["openai:backup"]);
   });
 
-  it("does not bypass an all-cooldown auth order through native Codex auth", () => {
-    expect(() =>
-      prepareAgentRuntimeAuthPlan({
-        ...openAIPlatformAuthFixture(),
-        env: {},
-        harnessId: "codex",
-        harnessRuntime: "codex",
-        authProfileStore: allCooldownOpenAIStore(),
-      }),
-    ).toThrow(/temporarily unavailable/u);
+  it("does not bypass an all-cooldown auth order through native Codex auth", async () => {
+    await expect(
+      async () =>
+        await prepareAgentRuntimeAuthPlan({
+          ...openAIPlatformAuthFixture(),
+          env: {},
+          harnessId: "codex",
+          harnessRuntime: "codex",
+          authProfileStore: allCooldownOpenAIStore(),
+        }),
+    ).rejects.toThrow(/temporarily unavailable/u);
   });
 
-  it("keeps an explicit provider SecretRef ahead of an all-cooldown auth order", () => {
-    const plan = prepareAgentRuntimeAuthPlan({
+  it("keeps an explicit provider SecretRef ahead of an all-cooldown auth order", async () => {
+    const plan = await prepareAgentRuntimeAuthPlan({
       ...openAIPlatformAuthFixture(),
       config: {
         models: {
@@ -657,7 +663,7 @@ describe("prepareAgentRuntimeAuthPlan", () => {
     });
   });
 
-  it("does not let clear OAuth auth hide a cooldown Platform tier before literal fallback", () => {
+  it("does not let clear OAuth auth hide a cooldown Platform tier before literal fallback", async () => {
     const store = authStore(
       {
         "openai:chatgpt": openAIOAuthProfile("oauth-access", "oauth-refresh", Date.now() + 60_000),
@@ -669,89 +675,92 @@ describe("prepareAgentRuntimeAuthPlan", () => {
       "openai:platform": { cooldownUntil: Date.now() + 60_000 },
     };
 
-    expect(() =>
-      prepareAgentRuntimeAuth({
-        provider: "openai",
-        modelId: "gpt-5.5",
-        config: {
-          models: {
-            providers: {
-              openai: { apiKey: "configured-platform-key", baseUrl: "", models: [] },
-            },
-          },
-        } as OpenClawConfig,
-        env: {},
-        authProfileStore: store,
-      }),
-    ).toThrow(/temporarily unavailable/u);
-  });
-
-  it("rejects an incompatible provider-bound profile before Codex forwarding", () => {
-    expect(() =>
-      prepareAgentRuntimeAuthPlan({
-        provider: "openai",
-        modelId: "gpt-5.5",
-        modelApi: "openai-responses",
-        modelBaseUrl: "https://relay.example/v1",
-        config: {
-          models: {
-            providers: {
-              openai: {
-                api: "openai-responses",
-                apiKey: "relay:key",
-                baseUrl: "https://relay.example/v1",
-                models: [],
-              },
-              relay: {
-                api: "openai-responses",
-                baseUrl: "https://relay.example/v1",
-                models: [],
+    await expect(
+      async () =>
+        await prepareAgentRuntimeAuth({
+          provider: "openai",
+          modelId: "gpt-5.5",
+          config: {
+            models: {
+              providers: {
+                openai: { apiKey: "configured-platform-key", baseUrl: "", models: [] },
               },
             },
-          },
-        } as OpenClawConfig,
-        env: {},
-        harnessId: "codex",
-        harnessRuntime: "codex",
-        authProfileStore: authStore({
-          "relay:key": apiKeyProfile("relay", "relay-secret"),
+          } as OpenClawConfig,
+          env: {},
+          authProfileStore: store,
         }),
-      }),
-    ).toThrow(/has no usable credentials/u);
+    ).rejects.toThrow(/temporarily unavailable/u);
   });
 
-  it("rejects an incompatible provider binding on a generic Codex plan", () => {
-    expect(() =>
-      prepareAgentRuntimeAuthPlan({
-        provider: "codex",
-        modelId: "gpt-5.4",
-        config: {
-          models: {
-            providers: {
-              codex: {
-                apiKey: "relay:key",
-                baseUrl: "https://relay.example/v1",
-                models: [],
-              },
-              relay: {
-                baseUrl: "https://relay.example/v1",
-                models: [],
+  it("rejects an incompatible provider-bound profile before Codex forwarding", async () => {
+    await expect(
+      async () =>
+        await prepareAgentRuntimeAuthPlan({
+          provider: "openai",
+          modelId: "gpt-5.5",
+          modelApi: "openai-responses",
+          modelBaseUrl: "https://relay.example/v1",
+          config: {
+            models: {
+              providers: {
+                openai: {
+                  api: "openai-responses",
+                  apiKey: "relay:key",
+                  baseUrl: "https://relay.example/v1",
+                  models: [],
+                },
+                relay: {
+                  api: "openai-responses",
+                  baseUrl: "https://relay.example/v1",
+                  models: [],
+                },
               },
             },
-          },
-        } as OpenClawConfig,
-        env: {},
-        harnessId: "codex",
-        harnessRuntime: "codex",
-        authProfileStore: authStore({
-          "relay:key": apiKeyProfile("relay", "relay-secret"),
+          } as OpenClawConfig,
+          env: {},
+          harnessId: "codex",
+          harnessRuntime: "codex",
+          authProfileStore: authStore({
+            "relay:key": apiKeyProfile("relay", "relay-secret"),
+          }),
         }),
-      }),
-    ).toThrow(/has no usable credentials/u);
+    ).rejects.toThrow(/has no usable credentials/u);
   });
 
-  it("selects the first compatible auth.order profile with its exact route", () => {
-    const preparation = prepareAgentRuntimeAuth({
+  it("rejects an incompatible provider binding on a generic Codex plan", async () => {
+    await expect(
+      async () =>
+        await prepareAgentRuntimeAuthPlan({
+          provider: "codex",
+          modelId: "gpt-5.4",
+          config: {
+            models: {
+              providers: {
+                codex: {
+                  apiKey: "relay:key",
+                  baseUrl: "https://relay.example/v1",
+                  models: [],
+                },
+                relay: {
+                  baseUrl: "https://relay.example/v1",
+                  models: [],
+                },
+              },
+            },
+          } as OpenClawConfig,
+          env: {},
+          harnessId: "codex",
+          harnessRuntime: "codex",
+          authProfileStore: authStore({
+            "relay:key": apiKeyProfile("relay", "relay-secret"),
+          }),
+        }),
+    ).rejects.toThrow(/has no usable credentials/u);
+  });
+
+  it("selects the first compatible auth.order profile with its exact route", async () => {
+    const preparation = await prepareAgentRuntimeAuth({
       ...openAIPlatformAuthFixture(),
       env: {},
       harnessId: "codex",
@@ -788,8 +797,8 @@ describe("prepareAgentRuntimeAuthPlan", () => {
     ]);
   });
 
-  it("prepares every ordered same-route profile as an exhaustive fallback set", () => {
-    const plan = prepareAgentRuntimeAuthPlan({
+  it("prepares every ordered same-route profile as an exhaustive fallback set", async () => {
+    const plan = await prepareAgentRuntimeAuthPlan({
       ...openAIPlatformAuthFixture(),
       config: openAIConfig({ baseUrl: "https://api.openai.com/v1" }),
       env: {},
@@ -821,8 +830,8 @@ describe("prepareAgentRuntimeAuthPlan", () => {
     });
   });
 
-  it("keeps same-route native candidates ahead of interleaved route fallbacks", () => {
-    const preparation = prepareAgentRuntimeAuth({
+  it("keeps same-route native candidates ahead of interleaved route fallbacks", async () => {
+    const preparation = await prepareAgentRuntimeAuth({
       ...openAIPlatformAuthFixture(),
       config: {
         secrets: {
@@ -866,8 +875,8 @@ describe("prepareAgentRuntimeAuthPlan", () => {
     ]);
   });
 
-  it("skips a definitively invalid ordered profile before selecting a sibling route", () => {
-    const plan = prepareAgentRuntimeAuthPlan({
+  it("skips a definitively invalid ordered profile before selecting a sibling route", async () => {
+    const plan = await prepareAgentRuntimeAuthPlan({
       ...openAIPlatformAuthFixture(),
       config: {
         auth: { order: { openai: ["openai:bad-key", "openai:chatgpt"] } },
@@ -905,8 +914,8 @@ describe("prepareAgentRuntimeAuthPlan", () => {
     });
   });
 
-  it("keeps an explicit provider SecretRef ahead of an all-invalid auth order", () => {
-    const plan = prepareAgentRuntimeAuthPlan({
+  it("keeps an explicit provider SecretRef ahead of an all-invalid auth order", async () => {
+    const plan = await prepareAgentRuntimeAuthPlan({
       ...openAIPlatformAuthFixture(),
       config: {
         auth: { order: { openai: ["openai:ordered"] } },
@@ -949,32 +958,33 @@ describe("prepareAgentRuntimeAuthPlan", () => {
     });
   });
 
-  it("does not cross to an incompatible auth route for a user pin", () => {
-    expect(() =>
-      prepareAgentRuntimeAuthPlan({
-        ...openAIChatGptAuthFixture(),
-        env: {},
-        config: {
-          models: {
-            providers: {
-              openai: {
-                api: "openai-chatgpt-responses",
-                baseUrl: "https://chatgpt.com/backend-api/codex",
-                models: [],
+  it("does not cross to an incompatible auth route for a user pin", async () => {
+    await expect(
+      async () =>
+        await prepareAgentRuntimeAuthPlan({
+          ...openAIChatGptAuthFixture(),
+          env: {},
+          config: {
+            models: {
+              providers: {
+                openai: {
+                  api: "openai-chatgpt-responses",
+                  baseUrl: "https://chatgpt.com/backend-api/codex",
+                  models: [],
+                },
               },
             },
-          },
-        } as OpenClawConfig,
-        sessionAuthProfileId: "openai:platform",
-        sessionAuthProfileSource: "user",
-        authProfileStore: authStore({
-          "openai:platform": openAIApiKeyProfile("platform-key"),
+          } as OpenClawConfig,
+          sessionAuthProfileId: "openai:platform",
+          sessionAuthProfileSource: "user",
+          authProfileStore: authStore({
+            "openai:platform": openAIApiKeyProfile("platform-key"),
+          }),
         }),
-      }),
-    ).toThrow(/no route-compatible authentication source/iu);
+    ).rejects.toThrow(/no route-compatible authentication source/iu);
   });
 
-  it("lets an explicit provider API key outrank automatic subscription profiles", () => {
+  it("lets an explicit provider API key outrank automatic subscription profiles", async () => {
     const config = {
       models: {
         providers: {
@@ -988,7 +998,7 @@ describe("prepareAgentRuntimeAuthPlan", () => {
         },
       },
     } as OpenClawConfig;
-    const plan = prepareAgentRuntimeAuthPlan({
+    const plan = await prepareAgentRuntimeAuthPlan({
       ...openAIChatGptAuthFixture(),
       config,
       env: {},
@@ -1009,62 +1019,64 @@ describe("prepareAgentRuntimeAuthPlan", () => {
     });
   });
 
-  it("rejects an official authored route with unvalidated native auth", () => {
-    expect(() =>
-      prepareAgentRuntimeAuthPlan({
-        ...openAIPlatformAuthFixture(),
-        config: {
-          models: {
-            providers: {
-              openai: {
-                auth: "api-key",
-                apiKey: "configured-platform-key",
-                baseUrl: "https://api.openai.com/v1",
-                models: [],
+  it("rejects an official authored route with unvalidated native auth", async () => {
+    await expect(
+      async () =>
+        await prepareAgentRuntimeAuthPlan({
+          ...openAIPlatformAuthFixture(),
+          config: {
+            models: {
+              providers: {
+                openai: {
+                  auth: "api-key",
+                  apiKey: "configured-platform-key",
+                  baseUrl: "https://api.openai.com/v1",
+                  models: [],
+                },
               },
             },
-          },
-        } as OpenClawConfig,
-        env: { OPENAI_API_KEY: "ambient-platform-key" },
-        authProfileStore: authStore(
-          {
-            "openai:chatgpt": openAIOAuthProfile(
-              "subscription-token",
-              "refresh-token",
-              Date.now() + 60_000,
-            ),
-          },
-          { openai: ["openai:chatgpt"] },
-        ),
-        sessionAuthProfileId: "openai:chatgpt",
-        sessionAuthProfileSource: "auto",
-        harnessId: "codex",
-        harnessRuntime: "codex",
-        harnessAuthBootstrap: "harness",
-        allowHarnessAuthProfileForwarding: false,
-      }),
-    ).toThrow(/route-compatible authentication source/u);
-  });
-
-  it("rejects a user-locked profile when the harness cannot accept host auth", () => {
-    expect(() =>
-      prepareAgentRuntimeAuthPlan({
-        ...openAIPlatformAuthFixture(),
-        env: {},
-        authProfileStore: authStore({
-          "openai:work": openAIApiKeyProfile("platform-key"),
+          } as OpenClawConfig,
+          env: { OPENAI_API_KEY: "ambient-platform-key" },
+          authProfileStore: authStore(
+            {
+              "openai:chatgpt": openAIOAuthProfile(
+                "subscription-token",
+                "refresh-token",
+                Date.now() + 60_000,
+              ),
+            },
+            { openai: ["openai:chatgpt"] },
+          ),
+          sessionAuthProfileId: "openai:chatgpt",
+          sessionAuthProfileSource: "auto",
+          harnessId: "codex",
+          harnessRuntime: "codex",
+          harnessAuthBootstrap: "harness",
+          allowHarnessAuthProfileForwarding: false,
         }),
-        sessionAuthProfileId: "openai:work",
-        sessionAuthProfileSource: "user",
-        harnessId: "codex",
-        harnessRuntime: "codex",
-        allowHarnessAuthProfileForwarding: false,
-      }),
-    ).toThrow(/native account instead/u);
+    ).rejects.toThrow(/route-compatible authentication source/u);
   });
 
-  it("honors the no-host-auth policy for non-Codex harnesses", () => {
-    const plan = prepareAgentRuntimeAuthPlan({
+  it("rejects a user-locked profile when the harness cannot accept host auth", async () => {
+    await expect(
+      async () =>
+        await prepareAgentRuntimeAuthPlan({
+          ...openAIPlatformAuthFixture(),
+          env: {},
+          authProfileStore: authStore({
+            "openai:work": openAIApiKeyProfile("platform-key"),
+          }),
+          sessionAuthProfileId: "openai:work",
+          sessionAuthProfileSource: "user",
+          harnessId: "codex",
+          harnessRuntime: "codex",
+          allowHarnessAuthProfileForwarding: false,
+        }),
+    ).rejects.toThrow(/native account instead/u);
+  });
+
+  it("honors the no-host-auth policy for non-Codex harnesses", async () => {
+    const plan = await prepareAgentRuntimeAuthPlan({
       provider: "xai",
       modelId: "grok-4",
       config: providerConfig("xai", { auth: "api-key", apiKey: "xai-key" }),
@@ -1083,8 +1095,8 @@ describe("prepareAgentRuntimeAuthPlan", () => {
     expect(plan.selectedAuthMode).toBeUndefined();
   });
 
-  it("lets a provider-entry token profile binding outrank configured auth and auth.order", () => {
-    const plan = prepareAgentRuntimeAuthPlan({
+  it("lets a provider-entry token profile binding outrank configured auth and auth.order", async () => {
+    const plan = await prepareAgentRuntimeAuthPlan({
       ...openAIPlatformAuthFixture(),
       config: {
         models: {
@@ -1123,82 +1135,88 @@ describe("prepareAgentRuntimeAuthPlan", () => {
   it.each([
     { provider: "anthropic", mode: "api_key" as const },
     { provider: "openai", mode: "oauth" as const },
-  ])("rejects a bound profile with conflicting $provider/$mode metadata", ({ mode, provider }) => {
-    expect(() =>
-      prepareAgentRuntimeAuth({
-        provider: "openai",
-        modelId: "gpt-5.5",
-        config: {
-          auth: { profiles: { "openai:bound": { provider, mode } } },
-          models: {
-            providers: {
-              openai: { apiKey: "openai:bound", baseUrl: "", models: [] },
-            },
-          },
-        } as OpenClawConfig,
-        env: {},
-        authProfileStore: authStore({
-          "openai:bound": openAIApiKeyProfile("bound-platform-key"),
-        }),
-      }),
-    ).toThrow(/no usable credentials/u);
-  });
+  ])(
+    "rejects a bound profile with conflicting $provider/$mode metadata",
+    async ({ mode, provider }) => {
+      await expect(
+        async () =>
+          await prepareAgentRuntimeAuth({
+            provider: "openai",
+            modelId: "gpt-5.5",
+            config: {
+              auth: { profiles: { "openai:bound": { provider, mode } } },
+              models: {
+                providers: {
+                  openai: { apiKey: "openai:bound", baseUrl: "", models: [] },
+                },
+              },
+            } as OpenClawConfig,
+            env: {},
+            authProfileStore: authStore({
+              "openai:bound": openAIApiKeyProfile("bound-platform-key"),
+            }),
+          }),
+      ).rejects.toThrow(/no usable credentials/u);
+    },
+  );
 
-  it("rejects an incompatible provider-entry profile without borrowing auth.order", () => {
-    expect(() =>
-      prepareAgentRuntimeAuthPlan({
-        ...openAIPlatformAuthFixture(),
-        config: {
-          models: {
-            providers: {
-              openai: {
-                apiKey: "openai:oauth",
-                baseUrl: "",
-                models: [],
+  it("rejects an incompatible provider-entry profile without borrowing auth.order", async () => {
+    await expect(
+      async () =>
+        await prepareAgentRuntimeAuthPlan({
+          ...openAIPlatformAuthFixture(),
+          config: {
+            models: {
+              providers: {
+                openai: {
+                  apiKey: "openai:oauth",
+                  baseUrl: "",
+                  models: [],
+                },
               },
             },
-          },
-        } as OpenClawConfig,
-        env: {},
-        authProfileStore: authStore(
-          {
-            "openai:oauth": openAIOAuthProfile(
-              "subscription-token",
-              "refresh-token",
-              Date.now() + 60_000,
-            ),
-            "openai:platform": openAIApiKeyProfile("platform-key"),
-          },
-          { openai: ["openai:platform"] },
-        ),
-      }),
-    ).toThrow(/not a compatible bearer profile/u);
+          } as OpenClawConfig,
+          env: {},
+          authProfileStore: authStore(
+            {
+              "openai:oauth": openAIOAuthProfile(
+                "subscription-token",
+                "refresh-token",
+                Date.now() + 60_000,
+              ),
+              "openai:platform": openAIApiKeyProfile("platform-key"),
+            },
+            { openai: ["openai:platform"] },
+          ),
+        }),
+    ).rejects.toThrow(/not a compatible bearer profile/u);
   });
 
-  it("does not forward a cooldowned provider-entry profile", () => {
+  it("does not forward a cooldowned provider-entry profile", async () => {
     const store = authStore({
       "openai:bound": openAITokenProfile("subscription-token", Date.now() + 60_000),
     });
     setProfileCooldown(store, "openai:bound");
 
-    expect(() =>
-      prepareAgentRuntimeAuthPlan({
-        ...openAIPlatformAuthFixture(),
-        config: {
-          models: {
-            providers: {
-              openai: { apiKey: "openai:bound", baseUrl: "", models: [] },
+    await expect(
+      async () =>
+        await prepareAgentRuntimeAuthPlan({
+          ...openAIPlatformAuthFixture(),
+          config: {
+            models: {
+              providers: {
+                openai: { apiKey: "openai:bound", baseUrl: "", models: [] },
+              },
             },
-          },
-        } as OpenClawConfig,
-        env: {},
-        authProfileStore: store,
-      }),
-    ).toThrow(/temporarily unavailable/u);
+          } as OpenClawConfig,
+          env: {},
+          authProfileStore: store,
+        }),
+    ).rejects.toThrow(/temporarily unavailable/u);
   });
 
-  it("keeps an explicit AWS SDK auth mode ahead of provider-entry profile bindings", () => {
-    const plan = prepareAgentRuntimeAuthPlan({
+  it("keeps an explicit AWS SDK auth mode ahead of provider-entry profile bindings", async () => {
+    const plan = await prepareAgentRuntimeAuthPlan({
       ...openAIPlatformAuthFixture(),
       config: {
         models: {
@@ -1226,8 +1244,8 @@ describe("prepareAgentRuntimeAuthPlan", () => {
     });
   });
 
-  it("keeps AWS SDK auth terminal when an API-key SecretRef and ordered profile also exist", () => {
-    const plan = prepareAgentRuntimeAuthPlan({
+  it("keeps AWS SDK auth terminal when an API-key SecretRef and ordered profile also exist", async () => {
+    const plan = await prepareAgentRuntimeAuthPlan({
       ...openAIPlatformAuthFixture(),
       config: {
         models: {
@@ -1264,8 +1282,8 @@ describe("prepareAgentRuntimeAuthPlan", () => {
     });
   });
 
-  it("keeps an explicit SecretRef API key ahead of ordered API-key profiles", () => {
-    const plan = prepareAgentRuntimeAuthPlan({
+  it("keeps an explicit SecretRef API key ahead of ordered API-key profiles", async () => {
+    const plan = await prepareAgentRuntimeAuthPlan({
       ...openAIChatGptAuthFixture(),
       config: {
         models: {
@@ -1330,7 +1348,7 @@ describe("prepareAgentRuntimeAuthPlan", () => {
       },
       { openai: ["openai:platform-backup"] },
     );
-    const prepared = prepareAgentRuntimeAuth({
+    const prepared = await prepareAgentRuntimeAuth({
       ...openAIChatGptAuthFixture(),
       config,
       env: {},
@@ -1414,7 +1432,7 @@ describe("prepareAgentRuntimeAuthPlan", () => {
     });
   });
 
-  it("does not unlock direct fallback when every prepared profile cools down before dispatch", () => {
+  it("does not unlock direct fallback when every prepared profile cools down before dispatch", async () => {
     const store = authStore(
       {
         "openai:platform": {
@@ -1425,7 +1443,7 @@ describe("prepareAgentRuntimeAuthPlan", () => {
       },
       { openai: ["openai:platform"] },
     );
-    const prepared = prepareAgentRuntimeAuth({
+    const prepared = await prepareAgentRuntimeAuth({
       provider: "openai",
       modelId: "gpt-5.5",
       config: {
@@ -1472,8 +1490,8 @@ describe("prepareAgentRuntimeAuthPlan", () => {
   // a bare `PROVIDER_API_KEY` remains the credential for the route. Refusing an
   // undeclared credential is about not letting it silently *succeed a declared
   // profile*, not about banning the documented zero-config path.
-  it("still uses an undeclared env key when the provider has no usable profile", () => {
-    const prepared = prepareAgentRuntimeAuth({
+  it("still uses an undeclared env key when the provider has no usable profile", async () => {
+    const prepared = await prepareAgentRuntimeAuth({
       provider: "openai",
       modelId: "gpt-5.5",
       env: { OPENAI_API_KEY: "ambient-platform-key" },
@@ -1491,8 +1509,8 @@ describe("prepareAgentRuntimeAuthPlan", () => {
 
   // Declared apiKey material keeps normal direct-source standing, so the
   // narrowing is scoped to credentials that appear nowhere in config.
-  it("still routes a declared provider apiKey with no profiles present", () => {
-    const prepared = prepareAgentRuntimeAuth({
+  it("still routes a declared provider apiKey with no profiles present", async () => {
+    const prepared = await prepareAgentRuntimeAuth({
       provider: "openai",
       modelId: "gpt-5.5",
       config: {
@@ -1512,8 +1530,8 @@ describe("prepareAgentRuntimeAuthPlan", () => {
     });
   });
 
-  it("reports a local provider marker as synthetic auth", () => {
-    const prepared = prepareAgentRuntimeAuth({
+  it("reports a local provider marker as synthetic auth", async () => {
+    const prepared = await prepareAgentRuntimeAuth({
       provider: "ollama-remote",
       modelId: "qwen3.5:27b",
       config: {
@@ -1585,8 +1603,8 @@ describe("prepareAgentRuntimeAuthPlan", () => {
       },
       requirements: ["api-key"],
     },
-  ])("does not queue $label", ({ config, env, profile, profileId, requirements }) => {
-    const prepared = prepareAgentRuntimeAuth({
+  ])("does not queue $label", async ({ config, env, profile, profileId, requirements }) => {
+    const prepared = await prepareAgentRuntimeAuth({
       provider: "openai",
       modelId: "gpt-5.5",
       config,
@@ -1617,7 +1635,7 @@ describe("prepareAgentRuntimeAuthPlan", () => {
         },
       } as OpenClawConfig;
       const store = authStore({});
-      const prepared = prepareAgentRuntimeAuth({
+      const prepared = await prepareAgentRuntimeAuth({
         ...openAIChatGptAuthFixture(),
         config,
         env: process.env,
@@ -1681,8 +1699,8 @@ describe("prepareAgentRuntimeAuthPlan", () => {
     }
   });
 
-  it("keeps a provider apiKey SecretRef ahead of API-key-compatible profiles", () => {
-    const prepared = prepareAgentRuntimeAuth({
+  it("keeps a provider apiKey SecretRef ahead of API-key-compatible profiles", async () => {
+    const prepared = await prepareAgentRuntimeAuth({
       ...openAIChatGptAuthFixture(),
       config: {
         models: {
@@ -1731,8 +1749,8 @@ describe("prepareAgentRuntimeAuthPlan", () => {
     ]);
   });
 
-  it("uses explicit OAuth mode for literal provider material", () => {
-    const prepared = prepareAgentRuntimeAuth({
+  it("uses explicit OAuth mode for literal provider material", async () => {
+    const prepared = await prepareAgentRuntimeAuth({
       ...openAIPlatformAuthFixture(),
       config: {
         models: {
@@ -1766,8 +1784,8 @@ describe("prepareAgentRuntimeAuthPlan", () => {
     ]);
   });
 
-  it("keeps an API profile ahead of configured OAuth direct material", () => {
-    const prepared = prepareAgentRuntimeAuth({
+  it("keeps an API profile ahead of configured OAuth direct material", async () => {
+    const prepared = await prepareAgentRuntimeAuth({
       provider: "openai",
       modelId: "gpt-5.5",
       config: {
@@ -1803,8 +1821,8 @@ describe("prepareAgentRuntimeAuthPlan", () => {
     ]);
   });
 
-  it("preserves explicit provider token auth before auth.order or route defaults", () => {
-    const plan = prepareAgentRuntimeAuthPlan({
+  it("preserves explicit provider token auth before auth.order or route defaults", async () => {
+    const plan = await prepareAgentRuntimeAuthPlan({
       ...openAIPlatformAuthFixture(),
       config: {
         models: {
@@ -1848,61 +1866,64 @@ describe("prepareAgentRuntimeAuthPlan", () => {
       },
       requirement: "api-key",
     },
-  ])("rejects a $profile.type profile for configured $auth auth", ({ auth, profile }) => {
-    expect(() =>
-      prepareAgentRuntimeAuth({
-        provider: "openai",
-        modelId: "gpt-5.5",
-        config: {
-          models: { providers: { openai: { auth, baseUrl: "", models: [] } } },
-        } as OpenClawConfig,
-        env: {},
-        authProfileStore: authStore({ "openai:wrong-route": profile }),
-      }),
-    ).toThrow(/no compatible credential source/u);
+  ])("rejects a $profile.type profile for configured $auth auth", async ({ auth, profile }) => {
+    await expect(
+      async () =>
+        await prepareAgentRuntimeAuth({
+          provider: "openai",
+          modelId: "gpt-5.5",
+          config: {
+            models: { providers: { openai: { auth, baseUrl: "", models: [] } } },
+          } as OpenClawConfig,
+          env: {},
+          authProfileStore: authStore({ "openai:wrong-route": profile }),
+        }),
+    ).rejects.toThrow(/no compatible credential source/u);
   });
 
-  it("rejects configured harness-native auth without a compatible host source", () => {
-    expect(() =>
-      prepareAgentRuntimeAuthPlan({
-        provider: "openai",
-        modelId: "gpt-5.5",
-        config: {
-          models: { providers: { openai: { auth: "oauth", baseUrl: "", models: [] } } },
-        } as OpenClawConfig,
-        env: {},
-        authProfileStore: authStore({}),
-        harnessId: "codex",
-        harnessRuntime: "codex",
-        harnessAuthBootstrap: "harness",
-      }),
-    ).toThrow(/no compatible credential source/u);
+  it("rejects configured harness-native auth without a compatible host source", async () => {
+    await expect(
+      async () =>
+        await prepareAgentRuntimeAuthPlan({
+          provider: "openai",
+          modelId: "gpt-5.5",
+          config: {
+            models: { providers: { openai: { auth: "oauth", baseUrl: "", models: [] } } },
+          } as OpenClawConfig,
+          env: {},
+          authProfileStore: authStore({}),
+          harnessId: "codex",
+          harnessRuntime: "codex",
+          harnessAuthBootstrap: "harness",
+        }),
+    ).rejects.toThrow(/no compatible credential source/u);
   });
 
-  it("rejects configured provider auth that contradicts an authored route", () => {
-    expect(() =>
-      prepareAgentRuntimeAuthPlan({
-        ...openAIPlatformAuthFixture(),
-        config: {
-          models: {
-            providers: {
-              openai: {
-                auth: "oauth",
-                api: "openai-responses",
-                baseUrl: "https://api.openai.com/v1",
-                models: [],
+  it("rejects configured provider auth that contradicts an authored route", async () => {
+    await expect(
+      async () =>
+        await prepareAgentRuntimeAuthPlan({
+          ...openAIPlatformAuthFixture(),
+          config: {
+            models: {
+              providers: {
+                openai: {
+                  auth: "oauth",
+                  api: "openai-responses",
+                  baseUrl: "https://api.openai.com/v1",
+                  models: [],
+                },
               },
             },
-          },
-        } as OpenClawConfig,
-        env: {},
-        authProfileStore: authStore({}),
-      }),
-    ).toThrow(/not compatible/u);
+          } as OpenClawConfig,
+          env: {},
+          authProfileStore: authStore({}),
+        }),
+    ).rejects.toThrow(/not compatible/u);
   });
 
-  it("preserves an explicit environment endpoint in the selected route", () => {
-    const plan = prepareAgentRuntimeAuthPlan({
+  it("preserves an explicit environment endpoint in the selected route", async () => {
+    const plan = await prepareAgentRuntimeAuthPlan({
       ...openAIPlatformAuthFixture(),
       env: {
         OPENAI_API_KEY: "platform-key",
@@ -1922,8 +1943,8 @@ describe("prepareAgentRuntimeAuthPlan", () => {
     });
   });
 
-  it("keeps the live codex virtual provider on a generic either-auth plan", () => {
-    const plan = prepareAgentRuntimeAuthPlan({
+  it("keeps the live codex virtual provider on a generic either-auth plan", async () => {
+    const plan = await prepareAgentRuntimeAuthPlan({
       ...virtualCodexAuthFixture(),
       authProfileStore: authStore({
         "openai:account": openAIOAuthProfile(
@@ -1947,8 +1968,8 @@ describe("prepareAgentRuntimeAuthPlan", () => {
     expect(plan.modelRoute).toBeUndefined();
   });
 
-  it("resolves automatic virtual Codex profiles from the OpenAI auth order", () => {
-    const plan = prepareAgentRuntimeAuthPlan({
+  it("resolves automatic virtual Codex profiles from the OpenAI auth order", async () => {
+    const plan = await prepareAgentRuntimeAuthPlan({
       ...virtualCodexAuthFixture(),
       authProfileStore: authStore(
         {
@@ -1972,8 +1993,8 @@ describe("prepareAgentRuntimeAuthPlan", () => {
     expect(plan.modelRoute).toBeUndefined();
   });
 
-  it("keeps same-provider retries behind a user-pinned virtual Codex profile", () => {
-    const preparation = prepareAgentRuntimeAuth({
+  it("keeps same-provider retries behind a user-pinned virtual Codex profile", async () => {
+    const preparation = await prepareAgentRuntimeAuth({
       ...virtualCodexAuthFixture(),
       authProfileStore: authStore(
         {
@@ -1994,59 +2015,62 @@ describe("prepareAgentRuntimeAuthPlan", () => {
     ]);
   });
 
-  it("rejects a user-pinned non-OpenAI profile on the virtual Codex provider", () => {
-    expect(() =>
-      prepareAgentRuntimeAuthPlan({
-        ...virtualCodexAuthFixture(),
-        authProfileStore: authStore({
-          "anthropic:work": apiKeyProfile("anthropic", "anthropic-key"),
+  it("rejects a user-pinned non-OpenAI profile on the virtual Codex provider", async () => {
+    await expect(
+      async () =>
+        await prepareAgentRuntimeAuthPlan({
+          ...virtualCodexAuthFixture(),
+          authProfileStore: authStore({
+            "anthropic:work": apiKeyProfile("anthropic", "anthropic-key"),
+          }),
+          sessionAuthProfileId: "anthropic:work",
+          sessionAuthProfileSource: "user",
         }),
-        sessionAuthProfileId: "anthropic:work",
-        sessionAuthProfileSource: "user",
-      }),
-    ).toThrow(/not configured for openai/u);
+    ).rejects.toThrow(/not configured for openai/u);
   });
 
-  it("keeps provider incompatibility for a config-only AWS SDK profile", () => {
+  it("keeps provider incompatibility for a config-only AWS SDK profile", async () => {
     const profileId = "amazon-bedrock:default";
-    expect(() =>
-      prepareAgentRuntimeAuthPlan({
-        ...virtualCodexAuthFixture(),
-        config: {
-          auth: { profiles: { [profileId]: { provider: "amazon-bedrock", mode: "aws-sdk" } } },
-          models: {
-            providers: {
-              "amazon-bedrock": {
-                auth: "aws-sdk",
-                baseUrl: "https://bedrock.example.test",
-                models: [],
+    await expect(
+      async () =>
+        await prepareAgentRuntimeAuthPlan({
+          ...virtualCodexAuthFixture(),
+          config: {
+            auth: { profiles: { [profileId]: { provider: "amazon-bedrock", mode: "aws-sdk" } } },
+            models: {
+              providers: {
+                "amazon-bedrock": {
+                  auth: "aws-sdk",
+                  baseUrl: "https://bedrock.example.test",
+                  models: [],
+                },
               },
             },
           },
-        },
-        authProfileStore: authStore({}),
-        sessionAuthProfileId: profileId,
-        sessionAuthProfileSource: "user",
-      }),
-    ).toThrow(/not configured for openai/u);
+          authProfileStore: authStore({}),
+          sessionAuthProfileId: profileId,
+          sessionAuthProfileSource: "user",
+        }),
+    ).rejects.toThrow(/not configured for openai/u);
   });
 
-  it("rejects unavailable user-pinned OpenAI profiles on the virtual Codex provider", () => {
-    expect(() =>
-      prepareAgentRuntimeAuthPlan({
-        ...virtualCodexAuthFixture(),
-        config: {
-          auth: {
-            profiles: {
-              "openai:missing": { provider: "openai", mode: "oauth" },
+  it("rejects unavailable user-pinned OpenAI profiles on the virtual Codex provider", async () => {
+    await expect(
+      async () =>
+        await prepareAgentRuntimeAuthPlan({
+          ...virtualCodexAuthFixture(),
+          config: {
+            auth: {
+              profiles: {
+                "openai:missing": { provider: "openai", mode: "oauth" },
+              },
             },
-          },
-        } as OpenClawConfig,
-        authProfileStore: authStore({}),
-        sessionAuthProfileId: "openai:missing",
-        sessionAuthProfileSource: "user",
-      }),
-    ).toThrow(
+          } as OpenClawConfig,
+          authProfileStore: authStore({}),
+          sessionAuthProfileId: "openai:missing",
+          sessionAuthProfileSource: "user",
+        }),
+    ).rejects.toThrow(
       expect.objectContaining({
         code: "selected_auth_profile_unavailable",
         reason: "auth",
@@ -2055,8 +2079,8 @@ describe("prepareAgentRuntimeAuthPlan", () => {
     );
   });
 
-  it("does not reuse a routed plan across compaction model overrides", () => {
-    const plan = prepareAgentRuntimeAuthPlan({
+  it("does not reuse a routed plan across compaction model overrides", async () => {
+    const plan = await prepareAgentRuntimeAuthPlan({
       provider: "openai",
       modelId: "gpt-5.5",
       env: { OPENAI_API_KEY: "platform-key" },
@@ -2071,8 +2095,8 @@ describe("prepareAgentRuntimeAuthPlan", () => {
     ).toBe(false);
   });
 
-  it("does not reuse a generic plan across model-scoped auth decisions", () => {
-    const plan = prepareAgentRuntimeAuthPlan({
+  it("does not reuse a generic plan across model-scoped auth decisions", async () => {
+    const plan = await prepareAgentRuntimeAuthPlan({
       provider: "anthropic",
       modelId: "claude-sonnet-4-6",
       env: {},
@@ -2094,3 +2118,49 @@ describe("prepareAgentRuntimeAuthPlan", () => {
   });
 });
 /* oxlint-disable max-lines -- TODO: split this grandfathered oversized file. */
+
+describe("Skynet acceptance profile isolation", () => {
+  const acceptance = "openai:account-88121327-b5c0-4e19-aa7c-e2e6abd2f76b";
+  it.each(["user", "user-link"] as const)(
+    "does not replace a cooling acceptance %s pin with production",
+    async (source) => {
+      const store = authStore({
+        [acceptance]: openAIOAuthProfile(
+          "fixture-acceptance",
+          "fixture-refresh",
+          Date.now() + 86_400_000,
+        ),
+        "openai:production": openAIOAuthProfile(
+          "fixture-production",
+          "fixture-refresh",
+          Date.now() + 86_400_000,
+        ),
+      });
+      setProfileCooldown(store, acceptance);
+      await expect(
+        async () =>
+          await prepareAgentRuntimeAuth({
+            ...codexPlatformAuthFixture(),
+            config: { auth: { order: { openai: ["openai:production"] } } },
+            authProfileStore: store,
+            sessionAuthProfileId: acceptance,
+            sessionAuthProfileSource: source,
+          }),
+      ).rejects.toThrow(/fixture-only: acceptance login cooling down/);
+    },
+  );
+  it("keeps ordinary automatic production selection unchanged", async () => {
+    const store = authStore({
+      "openai:production": openAIOAuthProfile(
+        "fixture-production",
+        "fixture-refresh",
+        Date.now() + 86_400_000,
+      ),
+    });
+    const prepared = await prepareAgentRuntimeAuth({
+      ...codexPlatformAuthFixture(),
+      authProfileStore: store,
+    });
+    expect(prepared.plan.forwardedAuthProfileId).toBe("openai:production");
+  });
+});

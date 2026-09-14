@@ -228,7 +228,7 @@ it.each([
     >(async (params) => {
       // Replace only the model turn; use the real planner and credential resolver.
       const store = ensureAuthProfileStore(params.agentDir);
-      const prepared = prepareAgentRuntimeAuth({
+      const prepared = await prepareAgentRuntimeAuth({
         config: params.config,
         provider: "fixture",
         modelId: "test-model",

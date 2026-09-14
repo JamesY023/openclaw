@@ -230,10 +230,10 @@ export async function prepareCompactionHarnessAuth(params: {
         plan: params.reusableRuntimeAuthPlan,
         attempts: [{ kind: "implicit", plan: params.reusableRuntimeAuthPlan }],
       }
-    : prepare(initialHarness!);
+    : await prepare(initialHarness!);
   let selectedPreparedHarness = selectPreparedHarness(runtimeAuthPreparation.attempts);
   if (!params.reusableRuntimeAuthPlan && selectedPreparedHarness.id !== initialHarness?.id) {
-    runtimeAuthPreparation = prepare(selectedPreparedHarness);
+    runtimeAuthPreparation = await prepare(selectedPreparedHarness);
     const confirmedHarness = selectPreparedHarness(runtimeAuthPreparation.attempts);
     if (confirmedHarness.id !== selectedPreparedHarness.id) {
       throw new Error(

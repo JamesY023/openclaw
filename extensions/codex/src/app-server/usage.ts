@@ -38,3 +38,33 @@ export async function fetchCodexAppServerUsageSnapshot(
   const accountEmail = ctx.email ?? usage.accountEmail;
   return accountEmail && !snapshot.error ? { ...snapshot, accountEmail } : snapshot;
 }
+
+/** Reads one host-selected OAuth profile without falling back to ambient Codex accounts. */
+export async function readCodexProfileRateLimits(
+  params: {
+    agentDir: string;
+    profileId: string;
+    config?: ProviderFetchUsageSnapshotContext["config"];
+  },
+  readUsage: CodexAppServerUsageReader = readCodexAppServerUsage,
+): Promise<unknown> {
+  const startOptions = resolveCodexAppServerRuntimeOptions({
+    pluginConfig: params.config?.plugins?.entries?.codex?.config,
+  }).start;
+  if (
+    startOptions.homeScope !== "agent" ||
+    startOptions.transport !== "stdio" ||
+    startOptions.env?.CODEX_HOME
+  ) {
+    throw new Error("Exact-profile quota requires an isolated agent app-server home.");
+  }
+  return (
+    await readUsage({
+      timeoutMs: 5000,
+      agentDir: params.agentDir,
+      authProfileId: params.profileId,
+      config: params.config,
+      startOptions,
+    })
+  ).rateLimits;
+}

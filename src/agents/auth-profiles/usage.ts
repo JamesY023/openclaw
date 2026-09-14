@@ -3,6 +3,7 @@
  * Records failures under the store lock, applies WHAM usage probes for OpenAI
  * OAuth profiles, and exposes display helpers for unavailable profiles.
  */
+import { isDeepStrictEqual } from "node:util";
 import { normalizeProviderId } from "@openclaw/model-catalog-core/provider-id";
 import {
   asDateTimestampMs,
@@ -101,6 +102,133 @@ async function updateOwnedAuthProfileUsage(
     store.usageStats = { ...store.usageStats, [profileId]: usage };
   }
   return updated;
+}
+
+function quotaRecord(value: unknown): Record<string, unknown> | undefined {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : undefined;
+}
+
+/** Recheck only native provider quota blocks at a rejected Codex auth decision. */
+export async function reprobeCodexBlockedProfiles(params: {
+  store: AuthProfileStore;
+  profileIds: string[];
+  agentDir: string;
+  config?: OpenClawConfig;
+  forModel: string;
+}): Promise<void> {
+  await Promise.all(
+    params.profileIds.map(async (profileId) => {
+      const profile = params.store.profiles[profileId];
+      const stats = params.store.usageStats?.[profileId];
+      const now = Date.now();
+      if (
+        profile?.type !== "oauth" ||
+        normalizeProviderId(profile.provider) !== "openai" ||
+        !stats ||
+        stats.blockedSource !== "codex_rate_limits" ||
+        stats.blockedReason !== "subscription_limit" ||
+        !isActiveUnusableWindow(stats.blockedUntil, now) ||
+        (stats.blockedScope === "model" && stats.blockedModel !== params.forModel) ||
+        isActiveUnusableWindow(stats.cooldownUntil, now) ||
+        isActiveUnusableWindow(stats.disabledUntil, now)
+      ) {
+        return;
+      }
+      let expectedProfile = structuredClone(profile);
+      const expectedStats = structuredClone(stats);
+      for (let attempt = 0; attempt < 2; attempt++) {
+        let refreshedProfile: typeof profile | undefined;
+        let cleared = false;
+        let rates: unknown;
+        try {
+          const { readCodexProfileRateLimits } = await import("../../../extensions/codex/api.js");
+          rates = await readCodexProfileRateLimits({
+            agentDir: params.agentDir,
+            profileId,
+            config: params.config,
+          });
+        } catch {
+          return;
+        }
+        const response = quotaRecord(rates);
+        const limits = quotaRecord(
+          response?.rateLimitsByLimitId
+            ? quotaRecord(response.rateLimitsByLimitId)?.codex
+            : response?.rateLimits,
+        );
+        if (
+          !limits ||
+          response?.ordinaryUsageAllowed === false ||
+          (response?.accountId != null && response.accountId !== expectedProfile.accountId) ||
+          limits.spendControlReached === true ||
+          (limits.limitId && limits.limitId !== "codex") ||
+          limits.rateLimitReachedType ||
+          limits.rate_limit_reached_type
+        ) {
+          return;
+        }
+        const windows = [limits.primary, limits.secondary]
+          .filter((window) => window != null)
+          .map(quotaRecord);
+        if (
+          windows.filter((window) => window?.windowDurationMins === 10080).length !== 1 ||
+          windows.filter((window) => window?.windowDurationMins === 300).length > 1 ||
+          windows.some(
+            (window) =>
+              !window ||
+              ![300, 10080].includes(Number(window.windowDurationMins)) ||
+              typeof window.windowDurationMins !== "number" ||
+              typeof window.usedPercent !== "number" ||
+              !Number.isFinite(window.usedPercent) ||
+              window.usedPercent < 0 ||
+              window.usedPercent >= 100,
+          )
+        ) {
+          return;
+        }
+        await updateOwnedAuthProfileUsage(params.store, profileId, {
+          agentDir: params.agentDir,
+          updater: (freshStore) => {
+            if (!isDeepStrictEqual(freshStore.usageStats?.[profileId], expectedStats)) {
+              return false;
+            }
+            if (!isDeepStrictEqual(freshStore.profiles[profileId], expectedProfile)) {
+              const fresh = freshStore.profiles[profileId];
+              if (
+                fresh?.type === "oauth" &&
+                fresh.provider === expectedProfile.provider &&
+                fresh.accountId === expectedProfile.accountId &&
+                fresh.accountId
+              ) {
+                refreshedProfile = structuredClone(fresh);
+              }
+              return false;
+            }
+            updateUsageStatsEntry(freshStore, profileId, (existing) => ({
+              ...existing,
+              blockedUntil: undefined,
+              blockedReason: undefined,
+              blockedSource: undefined,
+              blockedModel: undefined,
+              blockedScope: undefined,
+            }));
+            cleared = true;
+            return true;
+          },
+        });
+        if (cleared) {
+          params.store.profiles[profileId] = expectedProfile;
+          return;
+        }
+        if (!refreshedProfile) {
+          return;
+        }
+        expectedProfile = refreshedProfile;
+      }
+    }),
+  );
 }
 
 const FAILURE_REASON_PRIORITY: AuthProfileFailureReason[] = [

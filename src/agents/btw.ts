@@ -409,7 +409,7 @@ async function toSimpleContextMessages(params: {
   ) as Message[];
 }
 
-type BtwRuntimeAuthPreparation = ReturnType<typeof prepareAgentRuntimeAuth>;
+type BtwRuntimeAuthPreparation = Awaited<ReturnType<typeof prepareAgentRuntimeAuth>>;
 
 type BtwRuntimeModelMaterialization = {
   provider: string;
@@ -559,13 +559,14 @@ async function resolveRuntimeModel(params: {
     authProfileStoreSelection.ignoreAutoPreferredProfile && authProfileIdSource !== "user"
       ? undefined
       : authProfileId;
-  const runtimeAuthPreparation = prepareAgentRuntimeAuth({
+  const runtimeAuthPreparation = await prepareAgentRuntimeAuth({
     provider: runtimeProvider,
     modelId: runtimeModelId,
     modelApi: model.api,
     modelBaseUrl: model.baseUrl,
     config: cfg,
     env: process.env,
+    agentDir,
     workspaceDir,
     authProfileStore: authProfileStoreSelection.store,
     sessionAuthProfileId: effectiveAuthProfileId,
@@ -970,13 +971,14 @@ export async function runBtwSideQuestion(
               authProfileIdSource: runtime.authProfileIdSource,
             });
       const runtimeAuthPreparation = authProfileStoreSelection
-        ? prepareAgentRuntimeAuth({
+        ? await prepareAgentRuntimeAuth({
             provider: runtime.model.provider,
             modelId: runtime.model.id,
             modelApi: runtime.model.api,
             modelBaseUrl: runtime.model.baseUrl,
             config: params.cfg,
             env: process.env,
+            agentDir: params.agentDir,
             workspaceDir,
             authProfileStore: authProfileStoreSelection.store,
             sessionAuthProfileId:

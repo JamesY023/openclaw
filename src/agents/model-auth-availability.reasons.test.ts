@@ -40,7 +40,7 @@ describe("model auth unavailability reasons", () => {
     { name: "explicit lock", key: "ollama-local", locked: true, available: false },
   ])(
     "preserves source ownership for $name",
-    ({ key, literal, pending, snapshot, order, locked, available }) => {
+    async ({ key, literal, pending, snapshot, order, locked, available }) => {
       const sourceConfig = {
         ...(order ? { auth: { order: { acme: [] } } } : {}),
         models: {
@@ -109,7 +109,7 @@ describe("model auth unavailability reasons", () => {
         if (available === true) {
           expect(result.evidence).toBe("runtime");
           expect(result.selectedProfileId).toBeUndefined();
-          const prepared = prepareAgentRuntimeAuth({
+          const prepared = await prepareAgentRuntimeAuth({
             provider: "acme",
             modelId: "discovered",
             config: cfg,

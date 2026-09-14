@@ -53,7 +53,7 @@ describe("prepared setup-provider auth fallback", () => {
       },
       order: { "anthropic-vertex": [profileId] },
     } satisfies AuthProfileStore;
-    const prepared = prepareAgentRuntimeAuth({
+    const prepared = await prepareAgentRuntimeAuth({
       provider: "anthropic-vertex",
       modelId: "claude-sonnet-4-6",
       config,

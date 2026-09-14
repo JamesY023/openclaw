@@ -1,7 +1,7 @@
 /**
  * Prepares route-aware auth forwarding for auxiliary agent-runtime calls.
  * Callers supply an already loaded credential snapshot; this module never
- * resolves secrets or loads a provider runtime.
+ * resolves secrets; a rejected Codex quota decision can recheck its provider.
  */
 import { resolveMergedModelProviderConfig } from "../../config/model-provider-config.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
@@ -10,6 +10,7 @@ import type { PluginMetadataSnapshot } from "../../plugins/plugin-metadata-snaps
 import { isPendingOAuthRefreshFence } from "../auth-profiles/oauth-refresh-marker.js";
 import {
   prependAuthProfilePin,
+  resolveExplicitAuthOrderSelection,
   resolveAuthProfileEligibility,
   resolveAuthProfileOrderWithMetadata,
 } from "../auth-profiles/order.js";
@@ -17,6 +18,7 @@ import { resolveStoredCredentialReadOnlyAvailability } from "../auth-profiles/re
 import { createSelectedAuthProfileUnavailableError } from "../auth-profiles/selection-error.js";
 import type { AuthProfileStore } from "../auth-profiles/types.js";
 import { isProfileInCooldown } from "../auth-profiles/usage-state.js";
+import { reprobeCodexBlockedProfiles } from "../auth-profiles/usage.js";
 import { resolveProviderDirectAuthPlanningEvidence } from "../model-auth-env.js";
 import { resolveProviderConfigSecretInput } from "../model-auth-provider-config.js";
 import { resolveModelProviderAuthConfig } from "../model-auth-provider-route.js";
@@ -202,15 +204,75 @@ function resolvePreparedProviderEntryApiKeyProfileReference(
     );
   }
   if (isProfileInCooldown(params.store, reference.profileId, undefined, params.modelId)) {
-    throw new Error(
+    throw authProfileCooldownError(
+      params,
+      [reference.profileId],
       `Auth profile "${reference.profileId}" is temporarily unavailable for ${params.provider}/${params.modelId}.`,
     );
   }
   return reference;
 }
 
-/** Selects concrete provider routes and ordered credentials as one immutable preparation. */
-export function prepareAgentRuntimeAuth(
+class AuthProfileCooldownError extends Error {
+  readonly code = "AUTH_PROFILE_COOLDOWN";
+  constructor(
+    message: string,
+    readonly profileIds: string[],
+  ) {
+    super(message);
+  }
+}
+
+function authProfileCooldownError(
+  params: PrepareAgentRuntimeAuthPlanParams & { store?: AuthProfileStore },
+  profileIds: string[],
+  message: string,
+) {
+  const override = resolveExplicitAuthOrderSelection({
+    storeOrder: (params.authProfileStore ?? params.store)?.order,
+    configuredOrder: params.config?.auth?.order,
+    providerKey: params.provider,
+    providerAuthKey: params.provider,
+  });
+  let detail = message;
+  if (
+    override.fromStore &&
+    params.sessionAuthProfileSource !== "user" &&
+    params.sessionAuthProfileSource !== "user-link"
+  ) {
+    detail += ` Per-agent auth order override ${JSON.stringify(override.order)} overrides config auth.order ${JSON.stringify(params.config?.auth?.order?.[params.provider] ?? [])}.`;
+  }
+  return new AuthProfileCooldownError(detail, profileIds);
+}
+
+/** Selects routes and credentials, rechecking only a rejected exact-profile Codex quota block. */
+export async function prepareAgentRuntimeAuth(
+  input: PrepareAgentRuntimeAuthPlanParams,
+): Promise<PreparedAgentRuntimeAuth> {
+  try {
+    return prepareAgentRuntimeAuthUnchecked(input);
+  } catch (error) {
+    if (
+      !(error instanceof AuthProfileCooldownError) ||
+      input.provider !== "openai" ||
+      !input.agentDir ||
+      !input.authProfileStore ||
+      ![input.harnessId, input.harnessRuntime].some((id) => id?.trim().toLowerCase() === "codex")
+    ) {
+      throw error;
+    }
+    await reprobeCodexBlockedProfiles({
+      store: input.authProfileStore,
+      profileIds: error.profileIds,
+      agentDir: input.agentDir,
+      config: input.config,
+      forModel: input.modelId,
+    });
+    return prepareAgentRuntimeAuthUnchecked(input);
+  }
+}
+
+function prepareAgentRuntimeAuthUnchecked(
   input: PrepareAgentRuntimeAuthPlanParams,
 ): PreparedAgentRuntimeAuth {
   const params = { ...input, config: resolveModelProviderAuthConfig(input) };
@@ -219,6 +281,8 @@ export function prepareAgentRuntimeAuth(
     params.sessionAuthProfileSource === "user" || params.sessionAuthProfileSource === "user-link"
       ? requestedProfileId
       : undefined;
+  const acceptanceProfilePinned =
+    userPinnedProfileId === "openai:account-88121327-b5c0-4e19-aa7c-e2e6abd2f76b";
   const harnessOwnsOpenAIAuth =
     params.harnessId?.trim().toLowerCase() === "codex" ||
     params.harnessRuntime?.trim().toLowerCase() === "codex";
@@ -247,6 +311,9 @@ export function prepareAgentRuntimeAuth(
         })
       : { eligible: false };
     if (!eligibility.eligible) {
+      if (acceptanceProfilePinned) {
+        throw new Error("fixture-only: acceptance login unavailable; live not run");
+      }
       if (
         !store?.profiles[userPinnedProfileId] &&
         params.config?.auth?.profiles?.[userPinnedProfileId]?.mode !== "aws-sdk"
@@ -259,6 +326,17 @@ export function prepareAgentRuntimeAuth(
       }
       throw new Error(
         `Auth profile "${userPinnedProfileId}" is not configured for ${authProfileSelectionProvider}.`,
+      );
+    }
+    if (
+      acceptanceProfilePinned &&
+      store &&
+      isProfileInCooldown(store, userPinnedProfileId, undefined, params.modelId)
+    ) {
+      throw authProfileCooldownError(
+        params,
+        [userPinnedProfileId],
+        "fixture-only: acceptance login cooling down; live not run",
       );
     }
   }
@@ -305,7 +383,7 @@ export function prepareAgentRuntimeAuth(
   // Explicit auth owns the physical route; apiKey is only its bearer material.
   const selectedConfiguredAuthMode =
     configuredAuthMode ?? (providerHasDirectMaterial ? "api-key" : undefined);
-  const selectedProfileId = boundProfileId;
+  const selectedProfileId = acceptanceProfilePinned ? userPinnedProfileId : boundProfileId;
   const resolvedAutomaticOrder =
     !harnessAllowsAuthProfileForwarding ||
     selectedProfileId ||
@@ -454,7 +532,9 @@ export function prepareAgentRuntimeAuth(
     });
     if (sourceDecision.kind === "rejected") {
       if (sourceDecision.reason === "all-cooldown" && sourceDecision.source) {
-        throw new Error(
+        throw authProfileCooldownError(
+          params,
+          resolvedOrderedProfileIds,
           `Auth profile "${sourceDecision.source.profileId}" is temporarily unavailable for ${params.provider}/${params.modelId}.`,
         );
       }
@@ -566,7 +646,9 @@ export function prepareAgentRuntimeAuth(
       routeAuthDecision.reason === "all-cooldown" &&
       routeAuthDecision.source
     ) {
-      throw new Error(
+      throw authProfileCooldownError(
+        params,
+        resolvedOrderedProfileIds,
         `Auth profile "${routeAuthDecision.source.profileId}" is temporarily unavailable for ${params.provider}/${params.modelId}.`,
       );
     }

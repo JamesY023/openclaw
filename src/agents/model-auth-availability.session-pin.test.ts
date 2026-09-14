@@ -9,7 +9,7 @@ import { prepareAgentRuntimeAuth } from "./runtime-plan/prepare-auth.js";
 describe.each(["acme", "openai"])("%s session account readiness", (provider) => {
   it.each(["api-key", "oauth"] as const)(
     "requires provider SecretRef %s auth instead of a shared profile",
-    (mode) => {
+    async (mode) => {
       const config: OpenClawConfig = {
         models: {
           providers: {
@@ -27,7 +27,7 @@ describe.each(["acme", "openai"])("%s session account readiness", (provider) => 
         profiles: { shared: { type: "api_key", provider, key: "synthetic-shared" } },
       };
       const env = { SYNTHETIC_PROVIDER_KEY: "synthetic-ref" };
-      const runtime = prepareAgentRuntimeAuth({
+      const runtime = await prepareAgentRuntimeAuth({
         provider,
         modelId: "gpt-5.5",
         config,
@@ -54,58 +54,62 @@ describe.each(["acme", "openai"])("%s session account readiness", (provider) => 
     { personal: true, state: "refresh-needed" },
     { personal: false, state: "cooldown" },
     { personal: true, state: "cooldown" },
-  ])("matches runtime shared failover for $state (personal=$personal)", ({ personal, state }) => {
-    const pin = personal ? "personal:owner:account" : `${provider}:selected`;
-    const shared = `${provider}:shared`;
-    const config: OpenClawConfig = { auth: { order: { [provider]: [shared] } } };
-    const store: AuthProfileStore = {
-      version: 1,
-      profiles: {
-        [pin]: {
-          type: "oauth",
-          provider,
-          access: "synthetic-personal",
-          refresh: state === "expired-oauth" ? "" : "synthetic-refresh",
-          expires:
-            state === "expired-oauth" || state === "refresh-needed" ? 1 : Date.now() + 600_000,
+  ])(
+    "matches runtime shared failover for $state (personal=$personal)",
+    async ({ personal, state }) => {
+      const pin = personal ? "personal:owner:account" : `${provider}:selected`;
+      const shared = `${provider}:shared`;
+      const config: OpenClawConfig = { auth: { order: { [provider]: [shared] } } };
+      const store: AuthProfileStore = {
+        version: 1,
+        profiles: {
+          [pin]: {
+            type: "oauth",
+            provider,
+            access: "synthetic-personal",
+            refresh: state === "expired-oauth" ? "" : "synthetic-refresh",
+            expires:
+              state === "expired-oauth" || state === "refresh-needed" ? 1 : Date.now() + 600_000,
+          },
+          [shared]: { type: "api_key", provider, key: "synthetic-shared" },
         },
-        [shared]: { type: "api_key", provider, key: "synthetic-shared" },
-      },
-      ...(state === "cooldown"
-        ? { usageStats: { [pin]: { cooldownUntil: Date.now() + 600_000 } } }
-        : {}),
-    };
-    const expected = state === "ready" || state === "refresh-needed" ? [pin, shared] : [shared];
-    const runtime = prepareAgentRuntimeAuth({
-      provider,
-      modelId: "gpt-5.5",
-      config,
-      env: {},
-      authProfileStore: store,
-      sessionAuthProfileId: pin,
-      sessionAuthProfileSource: personal ? "user-link" : "user",
-    });
-    expect(runtime.attempts.map((attempt) => attempt.profileId)).toEqual(expected);
-    const readiness = createModelAuthAvailabilityResolver({
-      cfg: config,
-      authStore: store,
-      env: {},
-      allowPreparedRuntimeAuth: false,
-      routeResolverFactory: routeResolverFactory(provider === "openai" ? dualRoutes : null),
-    }).evaluateModelAuth(provider, {
-      modelId: "gpt-5.5",
-      preferredProfileId: pin,
-      pinnedProfileId: pin,
-    });
-    expect(readiness).toMatchObject({
-      availability: true,
-      selectedProfileId: state === "refresh-needed" && provider !== "openai" ? shared : expected[0],
-    });
-  });
+        ...(state === "cooldown"
+          ? { usageStats: { [pin]: { cooldownUntil: Date.now() + 600_000 } } }
+          : {}),
+      };
+      const expected = state === "ready" || state === "refresh-needed" ? [pin, shared] : [shared];
+      const runtime = await prepareAgentRuntimeAuth({
+        provider,
+        modelId: "gpt-5.5",
+        config,
+        env: {},
+        authProfileStore: store,
+        sessionAuthProfileId: pin,
+        sessionAuthProfileSource: personal ? "user-link" : "user",
+      });
+      expect(runtime.attempts.map((attempt) => attempt.profileId)).toEqual(expected);
+      const readiness = createModelAuthAvailabilityResolver({
+        cfg: config,
+        authStore: store,
+        env: {},
+        allowPreparedRuntimeAuth: false,
+        routeResolverFactory: routeResolverFactory(provider === "openai" ? dualRoutes : null),
+      }).evaluateModelAuth(provider, {
+        modelId: "gpt-5.5",
+        preferredProfileId: pin,
+        pinnedProfileId: pin,
+      });
+      expect(readiness).toMatchObject({
+        availability: true,
+        selectedProfileId:
+          state === "refresh-needed" && provider !== "openai" ? shared : expected[0],
+      });
+    },
+  );
 
   it.each(["expired-token", "missing", "wrong-provider", "unresolved-oauth"])(
     "rejects an invalid %s pin before considering shared credentials",
-    (state) => {
+    async (state) => {
       const pin = `${provider}:selected`;
       const shared = `${provider}:shared`;
       const config: OpenClawConfig = { auth: { order: { [provider]: [shared] } } };
@@ -139,17 +143,18 @@ describe.each(["acme", "openai"])("%s session account readiness", (provider) => 
           [shared]: { type: "api_key", provider, key: "synthetic-shared" },
         },
       };
-      expect(() =>
-        prepareAgentRuntimeAuth({
-          provider,
-          modelId: "gpt-5.5",
-          config,
-          env: {},
-          authProfileStore: store,
-          sessionAuthProfileId: pin,
-          sessionAuthProfileSource: "user",
-        }),
-      ).toThrow(
+      await expect(
+        async () =>
+          await prepareAgentRuntimeAuth({
+            provider,
+            modelId: "gpt-5.5",
+            config,
+            env: {},
+            authProfileStore: store,
+            sessionAuthProfileId: pin,
+            sessionAuthProfileSource: "user",
+          }),
+      ).rejects.toThrow(
         state === "missing"
           ? expect.objectContaining({
               code: "selected_auth_profile_unavailable",
@@ -176,7 +181,7 @@ describe.each(["acme", "openai"])("%s session account readiness", (provider) => 
 describe("session account pin admission", () => {
   it.each(["absent", "wrong-provider", "wrong-mode", "expired-token"])(
     "validates an AWS SDK declaration with %s stored credentials",
-    (state) => {
+    async (state) => {
       const provider = "acme";
       const pin = "acme:sdk";
       const config: OpenClawConfig = {
@@ -205,8 +210,8 @@ describe("session account pin admission", () => {
           "acme:shared": { type: "api_key", provider, key: "synthetic-shared" },
         },
       };
-      const prepare = () =>
-        prepareAgentRuntimeAuth({
+      const prepare = async () =>
+        await prepareAgentRuntimeAuth({
           provider,
           modelId: "synthetic-model",
           config,
@@ -216,9 +221,9 @@ describe("session account pin admission", () => {
           sessionAuthProfileSource: "user",
         });
       if (state === "absent") {
-        expect(prepare().attempts[0]?.profileId).toBe(pin);
+        expect((await prepare()).attempts[0]?.profileId).toBe(pin);
       } else {
-        expect(prepare).toThrow("is not configured");
+        await expect(prepare()).rejects.toThrow("is not configured");
       }
       expect(
         createModelAuthAvailabilityResolver({
@@ -236,7 +241,7 @@ describe("session account pin admission", () => {
     },
   );
 
-  it("admits a pinned OAuth reference from its prepared runtime credential", () => {
+  it("admits a pinned OAuth reference from its prepared runtime credential", async () => {
     const provider = "acme";
     const pin = "acme:hydrated";
     const config: OpenClawConfig = {};
@@ -270,15 +275,17 @@ describe("session account pin admission", () => {
       },
     };
     expect(
-      prepareAgentRuntimeAuth({
-        provider,
-        modelId: "synthetic-model",
-        config,
-        env: {},
-        authProfileStore: runtimeStore,
-        sessionAuthProfileId: pin,
-        sessionAuthProfileSource: "user",
-      }).attempts.map((attempt) => attempt.profileId),
+      (
+        await prepareAgentRuntimeAuth({
+          provider,
+          modelId: "synthetic-model",
+          config,
+          env: {},
+          authProfileStore: runtimeStore,
+          sessionAuthProfileId: pin,
+          sessionAuthProfileSource: "user",
+        })
+      ).attempts.map((attempt) => attempt.profileId),
     ).toEqual([pin]);
     expect(
       createModelAuthAvailabilityResolver({

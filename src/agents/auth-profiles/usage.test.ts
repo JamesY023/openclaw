@@ -7,10 +7,12 @@ import { MAX_DATE_TIMESTAMP_MS } from "@openclaw/normalization-core/number-coerc
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import { setLoggerOverride } from "../../logging/logger.js";
+import { createPluginMetadataSnapshotFixture } from "../../plugins/plugin-metadata.test-support.js";
 import { createApiKeyCredential } from "./credential-fixtures.test-support.js";
 import type { AuthProfileStore, ProfileUsageStats } from "./types.js";
 import { resolveProfileUnusableUntil } from "./usage-state.js";
 import {
+  reprobeCodexBlockedProfiles,
   clearExpiredCooldowns,
   getSoonestCooldownExpiry,
   isProfileInCooldown,
@@ -33,6 +35,9 @@ const storeMocks = vi.hoisted(() => ({
   saveAuthProfileStore: vi.fn(),
   updateAuthProfileStoreWithLock: vi.fn().mockResolvedValue(null),
 }));
+const codexQuotaRead = vi.hoisted(() => vi.fn());
+vi.mock("../../../extensions/codex/api.js", () => ({ readCodexProfileRateLimits: codexQuotaRead }));
+
 const fetchMock = vi.hoisted(() => vi.fn());
 
 vi.mock("./store.js", async (importOriginal) => ({
@@ -1987,3 +1992,213 @@ describe("markAuthProfileFailure — per-model cooldown metadata", () => {
   });
 });
 /* oxlint-disable max-lines -- TODO: split this grandfathered oversized file. */
+
+describe("Skynet rejected Codex quota recheck", () => {
+  const profileId = "openai:default";
+  const headroom = {
+    rateLimitsByLimitId: {
+      codex: {
+        limitId: "codex",
+        primary: { windowDurationMins: 300, usedPercent: 10 },
+        secondary: { windowDurationMins: 10080, usedPercent: 20 },
+      },
+    },
+  };
+  function fixture(
+    response: unknown = headroom,
+    duringRead: (store: AuthProfileStore, call: number) => void = () => {},
+  ) {
+    const store = makeStore({
+      [profileId]: {
+        blockedUntil: Date.now() + 86_400_000,
+        blockedReason: "subscription_limit",
+        blockedSource: "codex_rate_limits",
+        lastFailureAt: Date.now() - 1000,
+      },
+    });
+    const persisted = structuredClone(store);
+    let reads = 0,
+      writes = 0;
+    codexQuotaRead.mockReset();
+    codexQuotaRead.mockImplementation(async () => {
+      duringRead(persisted, ++reads);
+      if (response instanceof Error) {
+        throw response;
+      }
+      return response;
+    });
+    storeMocks.updateAuthProfileStoreWithLock.mockImplementation(async (params) => {
+      if (params.updater(persisted)) {
+        writes++;
+      }
+      return persisted;
+    });
+    const params = {
+      store,
+      profileIds: [profileId],
+      agentDir: "/fixture/agent",
+      forModel: "gpt-5.5",
+      config: { auth: { order: { openai: [profileId] } } },
+    };
+    return {
+      store,
+      persisted,
+      params,
+      counts: () => ({ reads, writes }),
+      run: () => reprobeCodexBlockedProfiles(params),
+    };
+  }
+  it.each([
+    headroom,
+    {
+      accountId: "acct_test_123",
+      rateLimitsByLimitId: {
+        codex: { ...headroom.rateLimitsByLimitId.codex, spendControlReached: false },
+      },
+    },
+  ])(
+    "rechecks only the rejected ordered profile through public auth preparation (%j)",
+    async (response) => {
+      const f = fixture(response);
+      const { prepareAgentRuntimeAuth } = await import("../runtime-plan/prepare-auth.js");
+      const result = await prepareAgentRuntimeAuth({
+        provider: "openai",
+        modelId: "gpt-5.5",
+        modelApi: "openai-chatgpt-responses",
+        modelBaseUrl: "https://chatgpt.com/backend-api/codex",
+        harnessId: "codex",
+        harnessRuntime: "codex",
+        agentDir: f.params.agentDir,
+        config: f.params.config,
+        metadataSnapshot: createPluginMetadataSnapshotFixture({ plugins: [] }),
+        env: {},
+        authProfileStore: f.store,
+      });
+      expect(result.plan.forwardedAuthProfileId).toBe(profileId);
+      expect(f.counts()).toEqual({ reads: 1, writes: 1 });
+      expect(f.store.usageStats?.[profileId].blockedUntil).toBeUndefined();
+      expect(codexQuotaRead).toHaveBeenCalledWith({
+        agentDir: "/fixture/agent",
+        profileId,
+        config: f.params.config,
+      });
+    },
+  );
+  it.each([
+    { ...headroom, accountId: "unrelated-account" },
+    {
+      rateLimitsByLimitId: {
+        codex: { ...headroom.rateLimitsByLimitId.codex, spendControlReached: true },
+      },
+    },
+    { ...headroom, ordinaryUsageAllowed: false },
+  ])(
+    "keeps a rejected quota block when account or spending admission fails (%j)",
+    async (response) => {
+      const f = fixture(response);
+      const before = structuredClone(f.store.usageStats);
+      const { prepareAgentRuntimeAuth } = await import("../runtime-plan/prepare-auth.js");
+      await expect(
+        prepareAgentRuntimeAuth({
+          provider: "openai",
+          modelId: "gpt-5.5",
+          modelApi: "openai-chatgpt-responses",
+          modelBaseUrl: "https://chatgpt.com/backend-api/codex",
+          harnessId: "codex",
+          agentDir: f.params.agentDir,
+          config: f.params.config,
+          metadataSnapshot: createPluginMetadataSnapshotFixture({ plugins: [] }),
+          env: {},
+          authProfileStore: f.store,
+        }),
+      ).rejects.toThrow("temporarily unavailable");
+      expect(f.counts()).toEqual({ reads: 1, writes: 0 });
+      expect(f.store.usageStats).toEqual(before);
+    },
+  );
+  it.each([
+    {},
+    new Error("unavailable"),
+    { rateLimits: { primary: { windowDurationMins: 10080, usedPercent: 100 } } },
+    {
+      rateLimits: {
+        primary: { windowDurationMins: 300, usedPercent: 100 },
+        secondary: { windowDurationMins: 10080, usedPercent: 0 },
+      },
+    },
+    { rateLimits: { limitId: "other", primary: { windowDurationMins: 10080, usedPercent: 0 } } },
+    {
+      rateLimits: {
+        primary: { windowDurationMins: 10080, usedPercent: 0 },
+        rateLimitReachedType: "weekly",
+      },
+    },
+  ])("retains blocks when native quota is exhausted or unknown (%j)", async (response) => {
+    const f = fixture(response),
+      before = structuredClone(f.store.usageStats);
+    await f.run();
+    expect(f.store.usageStats).toEqual(before);
+    expect(f.counts().writes).toBe(0);
+  });
+  it("cannot clear a newer block generation", async () => {
+    const f = fixture(headroom, (store) => {
+      store.usageStats![profileId].blockedUntil! += 1000;
+    });
+    await f.run();
+    expect(f.counts()).toEqual({ reads: 1, writes: 0 });
+    expect(f.persisted.usageStats?.[profileId].blockedUntil).toBeGreaterThan(
+      f.store.usageStats![profileId].blockedUntil!,
+    );
+  });
+  it("rechecks one same-account credential refresh and converges the caller snapshot", async () => {
+    const f = fixture(headroom, (store, call) => {
+      if (call === 1 && store.profiles[profileId].type === "oauth") {
+        store.profiles[profileId].access = "refreshed-fixture";
+      }
+    });
+    await f.run();
+    expect(f.counts()).toEqual({ reads: 2, writes: 1 });
+    expect(f.store.profiles[profileId]).toEqual(f.persisted.profiles[profileId]);
+  });
+  it("bounds credential churn to two reads and never clears it", async () => {
+    const f = fixture(headroom, (store, call) => {
+      if (store.profiles[profileId].type === "oauth") {
+        store.profiles[profileId].access = `fixture-${call}`;
+      }
+    });
+    await f.run();
+    expect(f.counts()).toEqual({ reads: 2, writes: 0 });
+  });
+  it.each([
+    { blockedSource: "wham" as const },
+    { cooldownUntil: Date.now() + 86_400_000, cooldownReason: "auth" as const },
+    { disabledUntil: Date.now() + 86_400_000, disabledReason: "auth_permanent" as const },
+    { blockedScope: "model" as const, blockedModel: "other-model" },
+  ])("does not probe other block classes (%j)", async (stats) => {
+    const f = fixture();
+    Object.assign(f.store.usageStats![profileId], stats);
+    await f.run();
+    expect(f.counts()).toEqual({ reads: 0, writes: 0 });
+  });
+  it("names an effective per-agent order override without changing it", async () => {
+    const f = fixture(new Error("unavailable"));
+    f.store.order = { openai: [profileId] };
+    f.params.config.auth.order.openai = ["openai:configured"];
+    const { prepareAgentRuntimeAuth } = await import("../runtime-plan/prepare-auth.js");
+    await expect(
+      prepareAgentRuntimeAuth({
+        provider: "openai",
+        modelId: "gpt-5.5",
+        modelApi: "openai-chatgpt-responses",
+        modelBaseUrl: "https://chatgpt.com/backend-api/codex",
+        harnessId: "codex",
+        agentDir: f.params.agentDir,
+        config: f.params.config,
+        metadataSnapshot: createPluginMetadataSnapshotFixture({ plugins: [] }),
+        env: {},
+        authProfileStore: f.store,
+      }),
+    ).rejects.toThrow(/Per-agent auth order override.*openai:default.*config.*openai:configured/);
+    expect(f.store.order.openai).toEqual([profileId]);
+  });
+});

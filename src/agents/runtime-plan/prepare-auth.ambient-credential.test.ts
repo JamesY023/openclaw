@@ -47,8 +47,8 @@ const config = {
 const ambientEnv = { ANTHROPIC_API_KEY: "ambient-anthropic-key" } as NodeJS.ProcessEnv;
 
 describe("ambient provider credentials are not queued behind a declared profile", () => {
-  it.each([undefined, "anthropic-messages"])("modelApi=%s", (modelApi) => {
-    const prepared = prepareAgentRuntimeAuth({
+  it.each([undefined, "anthropic-messages"])("modelApi=%s", async (modelApi) => {
+    const prepared = await prepareAgentRuntimeAuth({
       provider: "claude-cli",
       modelId: "claude-fable-5",
       ...(modelApi ? { modelApi } : {}),
@@ -66,8 +66,8 @@ describe("ambient provider credentials are not queued behind a declared profile"
   // Being unable to use what was declared is not authorization to use what was
   // not: an unusable profile must surface rather than silently move the run to
   // an account that appears nowhere in config.
-  it("does not substitute an ambient credential for an unusable declared profile", () => {
-    const prepared = prepareAgentRuntimeAuth({
+  it("does not substitute an ambient credential for an unusable declared profile", async () => {
+    const prepared = await prepareAgentRuntimeAuth({
       provider: "claude-cli",
       modelId: "claude-fable-5",
       config,
@@ -82,8 +82,8 @@ describe("ambient provider credentials are not queued behind a declared profile"
   // credentials only, never declared profiles. Every profile named in the
   // explicit order stays in the attempt list, in the order given, even when an
   // ambient credential is present in the environment.
-  it("preserves declared auth.order failover across multiple profiles", () => {
-    const prepared = prepareAgentRuntimeAuth({
+  it("preserves declared auth.order failover across multiple profiles", async () => {
+    const prepared = await prepareAgentRuntimeAuth({
       provider: "openai",
       modelId: "gpt-5.5",
       config: {
@@ -122,8 +122,8 @@ describe("ambient provider credentials are not queued behind a declared profile"
   // The documented remedy for operators who relied on an ambient key as a
   // backup: declare an API-key profile and order it after the subscription
   // profile (docs/concepts/model-failover.md). That path must keep working.
-  it("preserves a declared API-key backup ordered after a subscription profile", () => {
-    const prepared = prepareAgentRuntimeAuth({
+  it("preserves a declared API-key backup ordered after a subscription profile", async () => {
+    const prepared = await prepareAgentRuntimeAuth({
       provider: "openai",
       modelId: "gpt-5.5",
       config: {

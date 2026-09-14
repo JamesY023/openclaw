@@ -11,48 +11,51 @@ function metadata(owner: string) {
 }
 
 describe("prepared auth metadata ownership", () => {
-  it.each([true, false])("uses selected environment evidence (available: %s)", (available) => {
-    const snapshot = (envVar: string) =>
-      createPluginMetadataSnapshotFixture({
-        plugins: [
-          {
-            id: "fixture-owner",
-            providers: ["fixture-provider"],
-            setup: {
-              requiresRuntime: false,
-              providers: [{ id: "fixture-provider", envVars: [envVar] }],
+  it.each([true, false])(
+    "uses selected environment evidence (available: %s)",
+    async (available) => {
+      const snapshot = (envVar: string) =>
+        createPluginMetadataSnapshotFixture({
+          plugins: [
+            {
+              id: "fixture-owner",
+              providers: ["fixture-provider"],
+              setup: {
+                requiresRuntime: false,
+                providers: [{ id: "fixture-provider", envVars: [envVar] }],
+              },
             },
-          },
-        ],
-      });
-    const config = {};
-    const prepared = withPluginMetadataSnapshotScope(
-      snapshot("AMBIENT_PROVIDER_KEY"),
-      () =>
-        prepareAgentRuntimeAuth({
-          provider: "fixture-provider",
-          modelId: "model",
-          config,
-          env: available
-            ? { SELECTED_PROVIDER_KEY: "synthetic" }
-            : { AMBIENT_PROVIDER_KEY: "synthetic" },
-          metadataSnapshot: snapshot("SELECTED_PROVIDER_KEY"),
-          authProfileStore: { version: 1, profiles: {} },
-        }),
-      { config, trustConfigIdentity: true },
-    );
+          ],
+        });
+      const config = {};
+      const prepared = await withPluginMetadataSnapshotScope(
+        snapshot("AMBIENT_PROVIDER_KEY"),
+        async () =>
+          await prepareAgentRuntimeAuth({
+            provider: "fixture-provider",
+            modelId: "model",
+            config,
+            env: available
+              ? { SELECTED_PROVIDER_KEY: "synthetic" }
+              : { AMBIENT_PROVIDER_KEY: "synthetic" },
+            metadataSnapshot: snapshot("SELECTED_PROVIDER_KEY"),
+            authProfileStore: { version: 1, profiles: {} },
+          }),
+        { config, trustConfigIdentity: true },
+      );
 
-    expect(prepared.attempts[0]?.kind).toBe(available ? "direct" : "implicit");
-    expect(prepared.plan.credentialSource).toEqual(
-      available
-        ? { kind: "direct", evidence: "environment", authorization: "ambient" }
-        : { kind: "none" },
-    );
-  });
+      expect(prepared.attempts[0]?.kind).toBe(available ? "direct" : "implicit");
+      expect(prepared.plan.credentialSource).toEqual(
+        available
+          ? { kind: "direct", evidence: "environment", authorization: "ambient" }
+          : { kind: "none" },
+      );
+    },
+  );
 
   it.each(["user", "user-link", "auto", "binding"] as const)(
     "selects the prepared owner for %s profiles despite ambient aliases",
-    (selection) => {
+    async (selection) => {
       const selected = metadata("selected-auth");
       const ambient = metadata("ambient-auth");
       const config: OpenClawConfig =
@@ -65,8 +68,8 @@ describe("prepared auth metadata ownership", () => {
               },
             }
           : {};
-      const prepare = () =>
-        prepareAgentRuntimeAuth({
+      const prepare = async () =>
+        await prepareAgentRuntimeAuth({
           provider: "fixture-alias",
           modelId: "model",
           config,
@@ -91,7 +94,7 @@ describe("prepared auth metadata ownership", () => {
             ? { sessionAuthProfileId: "fixture:selected", sessionAuthProfileSource: selection }
             : {}),
         });
-      const prepared = withPluginMetadataSnapshotScope(ambient, prepare, {
+      const prepared = await withPluginMetadataSnapshotScope(ambient, prepare, {
         config,
         trustConfigIdentity: true,
       });
@@ -105,12 +108,12 @@ describe("prepared auth metadata ownership", () => {
     },
   );
 
-  it("treats an empty prepared selection as authoritative", () => {
+  it("treats an empty prepared selection as authoritative", async () => {
     const config = {};
-    const prepared = withPluginMetadataSnapshotScope(
+    const prepared = await withPluginMetadataSnapshotScope(
       metadata("ambient-auth"),
-      () =>
-        prepareAgentRuntimeAuth({
+      async () =>
+        await prepareAgentRuntimeAuth({
           provider: "fixture-alias",
           modelId: "model",
           config,

@@ -115,7 +115,7 @@ export async function prepareCodexControlSessionAuth(
   const model = resolveSessionModelRef(config, entry, sessionAgentId);
   const authProfileId = entry?.authProfileOverride ?? options.authProfileId;
   const store = resolveCodexAppServerAuthProfileStore({ agentDir, config, authProfileId });
-  const { plan, attempts } = prepareAgentRuntimeAuth({
+  const { plan, attempts } = await prepareAgentRuntimeAuth({
     provider: model.provider,
     modelId: model.model,
     config,
