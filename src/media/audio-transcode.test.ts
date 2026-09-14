@@ -18,11 +18,13 @@ vi.mock("../process/exec.js", () => ({
 }));
 
 let transcodeAudioBuffer: typeof import("./audio-transcode.js").transcodeAudioBuffer;
+let transcodeAudioBufferToTalkPcm: typeof import("./audio-transcode.js").transcodeAudioBufferToTalkPcm;
 let transcodeAudioBufferToOpus: typeof import("./audio-transcode.js").transcodeAudioBufferToOpus;
 
 beforeAll(async () => {
   vi.resetModules();
-  ({ transcodeAudioBuffer, transcodeAudioBufferToOpus } = await import("./audio-transcode.js"));
+  ({ transcodeAudioBuffer, transcodeAudioBufferToOpus, transcodeAudioBufferToTalkPcm } =
+    await import("./audio-transcode.js"));
 });
 
 afterAll(() => {
@@ -262,5 +264,50 @@ describe("transcodeAudioBuffer", () => {
       targetExtension: "caf",
     });
     expect(result).toEqual({ ok: false, reason: "platform-unsupported" });
+  });
+});
+
+describe("transcodeAudioBufferToTalkPcm", () => {
+  afterEach(() => runFfmpegMock.mockReset());
+  it("decodes bounded PCM through native ffmpeg and cleans its workspace", async () => {
+    let outputPath = "";
+    runFfmpegMock.mockImplementationOnce(async (args: string[], options: unknown) => {
+      expect(args).toEqual(
+        expect.arrayContaining(["-ac", "1", "-ar", "24000", "-c:a", "pcm_s16le", "-fs", "2880002"]),
+      );
+      expect(options).toEqual({ timeoutMs: 1234 });
+      outputPath = args.at(-1)!;
+      await writeFile(outputPath, Buffer.from([1, 0, 2, 0]));
+    });
+    expect(
+      await transcodeAudioBufferToTalkPcm({
+        audioBuffer: Buffer.from("opus"),
+        inputExtension: "opus",
+        timeoutMs: 1234,
+      }),
+    ).toEqual(Buffer.from([1, 0, 2, 0]));
+    expect(existsSync(outputPath)).toBe(false);
+  });
+  it.each([Buffer.alloc(0), Buffer.alloc(4), Buffer.from([1]), Buffer.alloc(2_880_002, 1)])(
+    "rejects invalid or clipped output instead of returning partial speech",
+    async (output) => {
+      runFfmpegMock.mockImplementationOnce(async (args: string[]) =>
+        writeFile(args.at(-1)!, output),
+      );
+      await expect(
+        transcodeAudioBufferToTalkPcm({ audioBuffer: Buffer.from("input") }),
+      ).rejects.toThrow("Talk synthesis audio");
+    },
+  );
+  it("propagates missing decoder or timeout while cleaning staged input", async () => {
+    let inputPath = "";
+    runFfmpegMock.mockImplementationOnce(async (args: string[]) => {
+      inputPath = args[args.indexOf("-i") + 1];
+      throw new Error("decoder unavailable");
+    });
+    await expect(
+      transcodeAudioBufferToTalkPcm({ audioBuffer: Buffer.from("input") }),
+    ).rejects.toThrow("decoder unavailable");
+    expect(existsSync(inputPath)).toBe(false);
   });
 });
