@@ -143,6 +143,7 @@ export async function transcodeAudioBufferToTalkPcm(params: {
               "-loglevel",
               "error",
               "-y",
+              "-xerror",
               "-i",
               inputPath,
               "-vn",

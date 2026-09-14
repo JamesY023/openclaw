@@ -25,6 +25,7 @@ import { REALTIME_VOICE_DESCRIBE_VIEW_TOOL } from "../../talk/describe-view-tool
 import {
   cancelInternalRealtimeVoiceBrowserSession,
   projectInternalRealtimeVoicePublicConfig,
+  resolveInternalRealtimeVoiceBrowserSessionTransport,
   type InternalRealtimeVoiceBrowserSessionCreateRequest,
 } from "../../talk/provider-internal.js";
 import {
@@ -47,6 +48,7 @@ import {
   forgetLegacyVoiceBinding,
   rememberLegacyVoiceBinding,
 } from "./talk-client-legacy-voice-bindings.js";
+import { talkSessionHandlers } from "./talk-session.js";
 import {
   buildRealtimeInstructions,
   buildRealtimeVoiceLaunchOptions,
@@ -68,14 +70,15 @@ function rejectTalkClientRequest(
   respond(false, undefined, errorShape(code, message));
 }
 
-export const createTalkClient: GatewayRequestHandler = async ({
-  params,
-  respond,
-  context,
-  client,
-  sessionMutationAuthorization,
-  sessionMutationCommitGuard,
-}) => {
+export const createTalkClient: GatewayRequestHandler = async (request) => {
+  const {
+    params,
+    respond,
+    context,
+    client,
+    sessionMutationAuthorization,
+    sessionMutationCommitGuard,
+  } = request;
   if (!assertValidParams(params, validateTalkClientCreateParams, "talk.client.create", respond)) {
     return;
   }
@@ -176,6 +179,34 @@ export const createTalkClient: GatewayRequestHandler = async ({
         `Realtime provider ${resolution.provider.id} does not support browser video frames`,
       );
       return;
+    }
+    if (
+      params.hostOwnedOutput &&
+      (await resolveInternalRealtimeVoiceBrowserSessionTransport({
+        provider: resolution.provider,
+        providerConfig: resolution.providerConfig,
+        cfg: runtimeConfig,
+        agentId,
+        model: launchOptions.model,
+        hostOwnedOutput: true,
+      })) === "gateway-relay"
+    ) {
+      sessionMutationAuthorization?.assertCurrent();
+      const {
+        voiceSessionId: _voiceSessionId,
+        capabilities: _capabilities,
+        ...relayParams
+      } = params;
+      return await talkSessionHandlers["talk.session.create"]({
+        ...request,
+        params: {
+          ...relayParams,
+          mode: "realtime",
+          brain: "agent-consult",
+          transport: "gateway-relay",
+          hostOwnedOutput: true,
+        },
+      });
     }
     const providerInstructions = await resolveTalkRealtimeProviderInstructions({
       config: runtimeConfig,

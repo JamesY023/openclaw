@@ -19,6 +19,10 @@ import {
   submitRelayAgentControlProviderResults,
 } from "./talk-realtime-relay-forced-consults.js";
 import {
+  acknowledgeOwnedTalkPlayback,
+  cancelOwnedTalkPlayback,
+} from "./talk-realtime-relay-owned-output.js";
+import {
   broadcastToolResultToOwner,
   clearRelayAgentToolCall,
   completeAfterToolResultSubmissions,
@@ -103,6 +107,10 @@ export function closeRelaySession(
   options?: RealtimeVoiceCloseOptions,
 ): void {
   const disposition = options?.disposition ?? "abort";
+  cancelOwnedTalkPlayback(session);
+  if (session.ownedOutput) {
+    session.ownedOutput.generation++;
+  }
   session.harness.close();
   session.outputOwnership.drain?.resolve();
   relaySessions.delete(session.id);
@@ -189,6 +197,11 @@ function getRelaySession(relaySessionId: string, connId: string): RelaySession {
   });
 }
 
+/** Resolve ownership through the exact live relay connection. */
+export function isHostOwnedTalkRelay(relaySessionId: string, connId: string): boolean {
+  return Boolean(getRelaySession(relaySessionId, connId).ownedOutput);
+}
+
 /** Streams one base64-encoded browser audio frame into the owning relay. */
 export function sendTalkRealtimeRelayAudio(params: {
   relaySessionId: string;
@@ -200,7 +213,7 @@ export function sendTalkRealtimeRelayAudio(params: {
     throw new Error("Realtime relay audio frame is too large");
   }
   const session = getRelaySession(params.relaySessionId, params.connId);
-  if (session.outputOwnership.phase === "cancelling") {
+  if (!session.ownedOutput && session.outputOwnership.phase === "cancelling") {
     return session.outputOwnership.drain!.promise.then(() => sendTalkRealtimeRelayAudio(params));
   }
   const audio = decodeTalkRelayAudioBase64(params.audioBase64, "Realtime relay");
@@ -226,9 +239,17 @@ export function acknowledgeTalkRealtimeRelayMark(params: {
   relaySessionId: string;
   connId: string;
   markName: string;
-}): void {
-  const session = getRelaySession(params.relaySessionId, params.connId);
-  session.bridge.acknowledgeMark(params.markName);
+  outcome?: "completed" | "cancelled" | "failed";
+}): void | Promise<void> {
+  const session = getRelaySession(params.relaySessionId, params.connId),
+    owned = session.ownedOutput;
+  const playback =
+    owned && [...owned.playbacks.values()].find((value) => value.markName === params.markName);
+  if (!owned || !playback) {
+    session.bridge.acknowledgeMark(params.markName);
+    return;
+  }
+  return acknowledgeOwnedTalkPlayback(session, playback, params.outcome);
 }
 
 /** Delivers a tool result from the browser/client side back to the provider. */
@@ -562,6 +583,28 @@ export async function cancelTalkRealtimeRelayTurn(params: {
   if (session.outputOwnership.phase === "owned" && session.outputOwnership.turnId !== turnId) {
     return { status: "stale" as const };
   }
+  if (session.ownedOutput) {
+    cancelOwnedTalkPlayback(session, turnId);
+    session.ownedOutput.generation++;
+    session.toolCalls.markAgentCompleted([
+      ...session.activeAgentToolCalls.keys(),
+      ...session.harness.forcedConsults.handles().map((handle) => handle.id),
+    ]);
+    abortRelayAgentRuns(session, params.reason ?? "client-cancelled");
+    for (const handle of session.harness.forcedConsults.handles()) {
+      session.harness.forcedConsults.markCancelled(handle);
+    }
+    const cancelled = session.harness.talk.cancelTurn({
+      turnId,
+      payload: { reason: params.reason ?? "client-cancelled" },
+    });
+    broadcastToOwner(session.context, session.connId, {
+      relaySessionId: session.id,
+      type: "clear",
+      ...(cancelled.ok ? { talkEvent: cancelled.event } : {}),
+    });
+    return { status: "applied" as const, turnId };
+  }
   const forcedConsults = session.harness.forcedConsults.handles().map((handle) => ({
     handle,
     nativeCallIds: session.harness.forcedConsults.nativeCallIds(handle),
@@ -640,6 +683,10 @@ export function resetTalkRealtimeRelayContinuity(
   session: RelaySession,
   reason = "session.continuity.reset",
 ): TalkEvent | undefined {
+  cancelOwnedTalkPlayback(session);
+  if (session.ownedOutput) {
+    session.ownedOutput.generation++;
+  }
   session.toolResultEpoch += 1;
   const retiredCallIds = new Set<string>([
     ...session.activeAgentToolCalls.keys(),

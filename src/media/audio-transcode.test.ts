@@ -273,7 +273,17 @@ describe("transcodeAudioBufferToTalkPcm", () => {
     let outputPath = "";
     runFfmpegMock.mockImplementationOnce(async (args: string[], options: unknown) => {
       expect(args).toEqual(
-        expect.arrayContaining(["-ac", "1", "-ar", "24000", "-c:a", "pcm_s16le", "-fs", "2880002"]),
+        expect.arrayContaining([
+          "-xerror",
+          "-ac",
+          "1",
+          "-ar",
+          "24000",
+          "-c:a",
+          "pcm_s16le",
+          "-fs",
+          "2880002",
+        ]),
       );
       expect(options).toEqual({ timeoutMs: 1234 });
       outputPath = args.at(-1)!;

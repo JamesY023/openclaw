@@ -83,6 +83,7 @@ const mocks = vi.hoisted(() => ({
   cancelTalkRealtimeRelayTurn: vi.fn(),
   stopTalkRealtimeRelaySession: vi.fn(),
   registerTalkRealtimeRelayAgentRun: vi.fn(),
+  isHostOwnedTalkRelay: vi.fn(() => false),
   flushTalkRealtimeRelayVoiceWrites: vi.fn(async () => undefined),
   ensureTalkRealtimeRelayVoiceSession: vi.fn(),
   submitTalkRealtimeRelayToolResult: vi.fn(),
@@ -247,6 +248,7 @@ vi.mock("../talk-realtime-relay.js", async (importOriginal) => {
     ensureTalkRealtimeRelayVoiceSession: mocks.ensureTalkRealtimeRelayVoiceSession,
     flushTalkRealtimeRelayVoiceWrites: mocks.flushTalkRealtimeRelayVoiceWrites,
     registerTalkRealtimeRelayAgentRun: mocks.registerTalkRealtimeRelayAgentRun,
+    isHostOwnedTalkRelay: mocks.isHostOwnedTalkRelay,
     sendTalkRealtimeRelayAudio: mocks.sendTalkRealtimeRelayAudio,
     steerTalkRealtimeRelayAgentRun: mocks.steerTalkRealtimeRelayAgentRun,
     stopTalkRealtimeRelaySession: mocks.stopTalkRealtimeRelaySession,
@@ -3404,7 +3406,8 @@ describe("talk.client.toolCall handler", () => {
     expectRespondOk(respond, { runId: "run-voice-1" });
   });
 
-  it("links relay-owned agent consult runs so relay cancellation can abort them", async () => {
+  it.each([false, true])("links relay consult runs with host ownership %s", async (hostOwned) => {
+    mocks.isHostOwnedTalkRelay.mockReturnValueOnce(hostOwned);
     const respond = vi.fn();
 
     await callTalkHandler("talk.client.toolCall", {
@@ -3422,6 +3425,9 @@ describe("talk.client.toolCall handler", () => {
       },
     });
 
+    expect(mockCallArg(mocks.chatSend, 0, 2)).toMatchObject({
+      prepareAssistantTranscriptMessage: hostOwned ? undefined : prepareTalkAgentConsultTranscript,
+    });
     expect(mocks.registerTalkRealtimeRelayAgentRun).toHaveBeenCalledWith({
       relaySessionId: "relay-1",
       connId: "conn-1",

@@ -9,7 +9,11 @@ import { formatForLog } from "../ws-log.js";
 import type { GatewayRequestHandler } from "./types.js";
 import { assertValidParams } from "./validation.js";
 
-export const acknowledgeTalkSessionMark: GatewayRequestHandler = ({ params, respond, client }) => {
+export const acknowledgeTalkSessionMark: GatewayRequestHandler = async ({
+  params,
+  respond,
+  client,
+}) => {
   if (
     !assertValidParams(
       params,
@@ -33,10 +37,11 @@ export const acknowledgeTalkSessionMark: GatewayRequestHandler = ({ params, resp
       );
       return;
     }
-    acknowledgeTalkRealtimeRelayMark({
+    await acknowledgeTalkRealtimeRelayMark({
       relaySessionId: session.relaySessionId,
       connId: requireUnifiedTalkSessionConn(session, client?.connId),
       markName: params.markName,
+      outcome: params.outcome,
     });
     respond(true, { ok: true }, undefined);
   } catch (error) {

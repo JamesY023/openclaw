@@ -327,7 +327,7 @@ export class RealtimeTalkSession {
       capabilities?: Array<"camera-frame" | "voice-transcript">;
     },
   ): Promise<RealtimeTalkSessionResult> {
-    const launchOptions = { ...options };
+    const launchOptions = { ...options, hostOwnedOutput: true };
     try {
       return await this.client.request<RealtimeTalkSessionResult>(
         "talk.client.create",

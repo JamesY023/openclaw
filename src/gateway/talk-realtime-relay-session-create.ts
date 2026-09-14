@@ -17,6 +17,7 @@ import { bindTalkRealtimeRelayAgentConsult } from "./talk-realtime-relay-agent-c
 import {
   buildAlreadyDeliveredToolResult,
   scheduleForcedAgentConsult,
+  handleOwnedTalkTranscript,
   submitForcedConsultProviderResult,
   submitRealtimeAgentConsultWorkingResponse,
 } from "./talk-realtime-relay-forced-consults.js";
@@ -41,6 +42,7 @@ import {
   RELAY_TRANSCRIPT_ECHO_LOOKBACK_MS,
   adoptRelayProviderToolCallId,
   broadcastToOwner,
+  broadcastRelayAudioFrames,
   ensureRelayTurn,
   relaySessions,
   type CreateTalkRealtimeRelaySessionParams,
@@ -56,9 +58,6 @@ import {
 } from "./talk-realtime-relay-tool-call-ledger.js";
 import { enqueueRelayVoiceTranscript } from "./talk-realtime-relay-voice.js";
 import { registerTalkConnectionCleanup } from "./talk-session-registry.js";
-
-// The relay contract is 20 ms of 24 kHz mono PCM16 per browser event.
-const RELAY_OUTPUT_AUDIO_FRAME_BYTES = 960;
 
 function isRelayAssistantEchoTranscript(session: RelaySession | undefined, text: string): boolean {
   return session?.harness.isLikelyAssistantEchoTranscript(text) ?? false;
@@ -211,6 +210,13 @@ export function createTalkRealtimeRelaySession(
   const relayProvider = outputOwnership.bind(params.provider, runAgentConsult);
   const bridgeRequest: Parameters<typeof harness.createBridge>[0] = {
     provider: relayProvider,
+    hostOwnedOutput: params.hostOwnedOutput,
+    onOutputOwnership: (owner) => {
+      const relay = getActiveRelay();
+      if (owner === "host" && params.hostOwnedOutput && relay && !relay.ownedOutput) {
+        relay.ownedOutput = { generation: 0, inputTurns: new Set(), playbacks: new Map() };
+      }
+    },
     cfg: params.cfg,
     agentId: relayAgentId,
     providerConfig: params.providerConfig,
@@ -240,7 +246,7 @@ export function createTalkRealtimeRelaySession(
       isOpen: () => Boolean(getActiveRelay()),
       sendAudio: (audio) => {
         const relay = getActiveRelay();
-        if (!relay) {
+        if (!relay || relay.ownedOutput) {
           return;
         }
         if (outputOwnership.phase === "cancelling") {
@@ -250,27 +256,10 @@ export function createTalkRealtimeRelaySession(
         if (!outputTurnId) {
           return;
         }
-        for (let offset = 0; offset < audio.byteLength; offset += RELAY_OUTPUT_AUDIO_FRAME_BYTES) {
-          const frame = audio.subarray(
-            offset,
-            Math.min(offset + RELAY_OUTPUT_AUDIO_FRAME_BYTES, audio.byteLength),
-          );
+        if (audio.byteLength > 0) {
           playbackTurnId = outputTurnId;
-          emit(
-            {
-              relaySessionId,
-              type: "audio",
-              audioBase64: frame.toString("base64"),
-              ...(currentOutputItemId ? { itemId: currentOutputItemId } : {}),
-              ...(outputOwnership.responseId ? { responseId: outputOwnership.responseId } : {}),
-            },
-            {
-              type: "output.audio.delta",
-              turnId: outputTurnId,
-              payload: { byteLength: frame.byteLength },
-            },
-          );
         }
+        broadcastRelayAudioFrames(relay, audio, outputTurnId, currentOutputItemId);
       },
       clearAudio: clearPlayback,
       sendMark: (markName) => {
@@ -416,9 +405,13 @@ export function createTalkRealtimeRelaySession(
         });
       }
     },
-    onTranscript: (role, text, final) => {
+    onTranscript: (role, text, final, metadata) => {
       const relay = getActiveRelay();
       if (!relay) {
+        return;
+      }
+      if (relay.ownedOutput) {
+        handleOwnedTalkTranscript(relay, role, text, final, metadata?.providerTurnId);
         return;
       }
       if (role === "assistant" && outputOwnership.phase === "cancelling") {
@@ -534,7 +527,14 @@ export function createTalkRealtimeRelaySession(
       }
       ready = true;
       continuityResetActive = false;
-      emit({ relaySessionId, type: "ready" }, { type: "session.ready", payload: null });
+      emit(
+        {
+          relaySessionId,
+          type: "ready",
+          ...(getActiveRelay()?.ownedOutput ? { outputOwnership: "host" as const } : {}),
+        },
+        { type: "session.ready", payload: null },
+      );
     },
     onError: (error) => {
       const active = getActiveRelay();

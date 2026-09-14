@@ -130,6 +130,7 @@ describe("RealtimeTalkSession", () => {
     expect(request).toHaveBeenCalledWith(
       "talk.client.create",
       {
+        hostOwnedOutput: true,
         sessionKey: "main",
         capabilities: ["voice-transcript"],
       },
@@ -417,6 +418,7 @@ describe("RealtimeTalkSession", () => {
       1,
       "talk.client.create",
       {
+        hostOwnedOutput: true,
         sessionKey: "main",
         provider: "xai",
         transport: "gateway-relay",
@@ -428,6 +430,7 @@ describe("RealtimeTalkSession", () => {
       2,
       "talk.session.create",
       {
+        hostOwnedOutput: true,
         sessionKey: "main",
         provider: "xai",
         transport: "gateway-relay",
@@ -482,6 +485,7 @@ describe("RealtimeTalkSession", () => {
       2,
       "talk.client.create",
       {
+        hostOwnedOutput: true,
         sessionKey: "main",
         provider: "openai",
         transport: "gateway-relay",
@@ -493,6 +497,7 @@ describe("RealtimeTalkSession", () => {
       3,
       "talk.session.create",
       {
+        hostOwnedOutput: true,
         sessionKey: "main",
         provider: "openai",
         transport: "gateway-relay",
@@ -554,6 +559,7 @@ describe("RealtimeTalkSession", () => {
     expect(request).toHaveBeenCalledWith(
       "talk.client.create",
       {
+        hostOwnedOutput: true,
         sessionKey: "main",
         provider: "openai",
         model: "gpt-realtime-2",
@@ -601,6 +607,7 @@ describe("RealtimeTalkSession", () => {
       2,
       "talk.client.create",
       {
+        hostOwnedOutput: true,
         sessionKey: "main",
         capabilities: ["voice-transcript", "camera-frame"],
       },
@@ -716,6 +723,7 @@ describe("RealtimeTalkSession", () => {
       2,
       "talk.client.create",
       {
+        hostOwnedOutput: true,
         sessionKey: "main",
         capabilities: ["voice-transcript"],
       },
@@ -748,7 +756,7 @@ describe("RealtimeTalkSession", () => {
     expect(request.mock.calls).toEqual([
       [
         "talk.client.create",
-        { sessionKey: "main", capabilities: ["voice-transcript"] },
+        { sessionKey: "main", capabilities: ["voice-transcript"], hostOwnedOutput: true },
         requestTimeoutOptions,
       ],
       ["talk.config", {}, requestTimeoutOptions],
@@ -793,6 +801,7 @@ describe("RealtimeTalkSession", () => {
       3,
       "talk.session.create",
       {
+        hostOwnedOutput: true,
         sessionKey: "main",
         mode: "realtime",
         transport: "gateway-relay",
@@ -835,6 +844,7 @@ describe("RealtimeTalkSession", () => {
       3,
       "talk.session.create",
       {
+        hostOwnedOutput: true,
         sessionKey: "main",
         mode: "realtime",
         transport: "gateway-relay",
@@ -863,7 +873,7 @@ describe("RealtimeTalkSession", () => {
     expect(request.mock.calls).toEqual([
       [
         "talk.client.create",
-        { sessionKey: "main", capabilities: ["voice-transcript"] },
+        { sessionKey: "main", capabilities: ["voice-transcript"], hostOwnedOutput: true },
         requestTimeoutOptions,
       ],
       ["talk.config", {}, requestTimeoutOptions],
@@ -889,7 +899,7 @@ describe("RealtimeTalkSession", () => {
     expect(request.mock.calls).toEqual([
       [
         "talk.client.create",
-        { sessionKey: "main", capabilities: ["voice-transcript"] },
+        { sessionKey: "main", capabilities: ["voice-transcript"], hostOwnedOutput: true },
         requestTimeoutOptions,
       ],
       ["talk.config", {}, requestTimeoutOptions],

@@ -181,7 +181,26 @@ export class TalkRealtimeRelayOutputOwnership {
   }
 }
 
+export type OwnedTalkPlayback = {
+  markName: string;
+  turnId: string;
+  runId: string;
+  terminalMessageId: string;
+  text: string;
+  generation: number;
+  controller: AbortController;
+  state: "preparing" | "playing" | "awaiting" | "completed" | "cancelled" | "failed";
+  commit?: Promise<void>;
+};
+
+export type OwnedTalkOutput = {
+  generation: number;
+  inputTurns: Set<string>;
+  playbacks: Map<string, OwnedTalkPlayback>;
+};
+
 export type RelaySession = {
+  ownedOutput?: OwnedTalkOutput;
   getToolAuthorityOverlay?: (
     authority?: TalkAgentConsultAuthority,
     source?: "reply" | "attempt",
@@ -220,6 +239,7 @@ export type RelaySession = {
 };
 
 export type CreateTalkRealtimeRelaySessionParams = {
+  hostOwnedOutput?: boolean;
   context: GatewayRequestContext;
   connId: string;
   cfg?: OpenClawConfig;
@@ -338,4 +358,30 @@ export function ensureRelayTurn(session: RelaySession): string {
     });
   }
   return turn.turnId;
+}
+
+/** Emit provider audio using the relay's 20 ms, 24 kHz mono PCM16 framing contract. */
+export function broadcastRelayAudioFrames(
+  session: RelaySession,
+  audio: Buffer,
+  turnId: string,
+  itemId?: string,
+): void {
+  for (let offset = 0; offset < audio.byteLength; offset += 960) {
+    const frame = audio.subarray(offset, offset + 960);
+    broadcastToOwner(session.context, session.connId, {
+      relaySessionId: session.id,
+      type: "audio",
+      audioBase64: frame.toString("base64"),
+      ...(itemId ? { itemId } : {}),
+      ...(session.outputOwnership.responseId
+        ? { responseId: session.outputOwnership.responseId }
+        : {}),
+      talkEvent: session.harness.talk.emit({
+        type: "output.audio.delta",
+        turnId,
+        payload: { byteLength: frame.byteLength },
+      }),
+    });
+  }
 }

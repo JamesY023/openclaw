@@ -3,6 +3,7 @@
 export { createTalkRealtimeRelaySession } from "./talk-realtime-relay-session-create.js";
 export {
   acknowledgeTalkRealtimeRelayMark,
+  isHostOwnedTalkRelay,
   cancelTalkRealtimeRelayTurn,
   ensureTalkRealtimeRelayVoiceSession,
   flushTalkRealtimeRelayVoiceWrites,

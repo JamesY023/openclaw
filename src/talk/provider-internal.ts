@@ -46,6 +46,13 @@ export type InternalRealtimeVoiceBrowserSessionCreateRequest =
   };
 
 type InternalRealtimeVoiceProviderApi = {
+  resolveBrowserSessionTransport?: (ctx: {
+    cfg?: OpenClawConfig;
+    providerConfig: RealtimeVoiceProviderConfig;
+    agentId?: string;
+    model?: string;
+    hostOwnedOutput?: boolean;
+  }) => Promise<"gateway-relay" | undefined>;
   isBrowserSessionConfigured: (ctx: {
     cfg?: OpenClawConfig;
     providerConfig: RealtimeVoiceProviderConfig;
@@ -191,6 +198,25 @@ export function projectInternalRealtimeVoicePublicProjection<
     };
   }
   return { config: params.config };
+}
+
+export async function resolveInternalRealtimeVoiceBrowserSessionTransport(params: {
+  provider: RealtimeVoiceProviderPlugin;
+  cfg?: OpenClawConfig;
+  providerConfig: RealtimeVoiceProviderConfig;
+  agentId?: string;
+  model?: string;
+  hostOwnedOutput?: boolean;
+}): Promise<"gateway-relay" | undefined> {
+  return await readInternalRealtimeVoiceProviderApi(
+    params.provider,
+  )?.resolveBrowserSessionTransport?.({
+    cfg: params.cfg,
+    providerConfig: params.providerConfig,
+    agentId: params.agentId,
+    model: params.model,
+    hostOwnedOutput: params.hostOwnedOutput,
+  });
 }
 
 export function resolveInternalRealtimeVoiceGatewayRelayLaunchError(params: {

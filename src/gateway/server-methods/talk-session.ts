@@ -324,6 +324,7 @@ export const talkSessionHandlers: GatewayRequestHandlers = {
           ensuredSessionId,
         });
         const session = createTalkRealtimeRelaySession({
+          hostOwnedOutput: params.hostOwnedOutput,
           context,
           connId,
           cfg: runtimeConfig,

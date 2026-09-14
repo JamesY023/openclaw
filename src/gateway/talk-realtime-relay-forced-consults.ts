@@ -9,6 +9,10 @@ import { readSpeakableRealtimeVoiceToolResult } from "../talk/consult-question.j
 import type { RealtimeVoiceForcedConsultHandle } from "../talk/forced-consult-coordinator.js";
 import type { RealtimeVoiceToolResultOptions } from "../talk/provider-types.js";
 import {
+  cancelOwnedTalkPlayback,
+  deliverOwnedTalkResult,
+} from "./talk-realtime-relay-owned-output.js";
+import {
   broadcastToolResultToOwner,
   clearRelayAgentToolCall,
   completeAfterToolResultSubmissions,
@@ -27,6 +31,7 @@ import {
   type RelayAgentControlProviderSubmission,
   type RelaySession,
 } from "./talk-realtime-relay-state.js";
+import { enqueueRelayVoiceTranscript } from "./talk-realtime-relay-voice.js";
 
 const FORCED_CONSULT_FALLBACK_DELAY_MS = 200;
 const FORCED_CONSULT_RESULT_MAX_CHARS = 1_800;
@@ -145,62 +150,134 @@ export function submitRelayAgentControlProviderResults(
   };
 }
 
+export function handleOwnedTalkTranscript(
+  session: RelaySession,
+  role: "user" | "assistant",
+  text: string,
+  final: boolean,
+  providerTurnId?: string,
+): void {
+  if (
+    role === "assistant" ||
+    (final && providerTurnId && session.ownedOutput?.inputTurns.has(providerTurnId))
+  ) {
+    return;
+  }
+  if (final) {
+    if (!enqueueRelayVoiceTranscript(session, role, text)) {
+      return;
+    }
+    scheduleForcedAgentConsult(session, text, providerTurnId);
+  }
+  broadcastToOwner(session.context, session.connId, {
+    relaySessionId: session.id,
+    type: "transcript",
+    role,
+    text,
+    final,
+  });
+}
+
 export function scheduleForcedAgentConsult(
   session: RelaySession | undefined,
   question: string,
+  providerTurnId?: string,
 ): void {
   if (!session || !question.trim()) {
     return;
   }
-  if (session.harness.forcedConsults.hasRecentNativeConsult(question)) {
-    return;
+  const owned = session.ownedOutput;
+  let ownedContext: { generation: number; turnId: string } | undefined;
+  if (owned) {
+    if (!providerTurnId || providerTurnId.length > 1024) {
+      broadcastToOwner(session.context, session.connId, {
+        relaySessionId: session.id,
+        type: "error",
+        message: "Talk user turn has no valid provider identity; no agent request was started.",
+      });
+      return;
+    }
+    if (owned.inputTurns.has(providerTurnId)) {
+      return;
+    }
+    if (owned.inputTurns.size >= 1024) {
+      session.failSession("Talk user-turn identity limit reached");
+      return;
+    }
+    owned.inputTurns.add(providerTurnId);
+    cancelOwnedTalkPlayback(session);
+    owned.generation++;
+    const previous = session.harness.talk.activeTurnId;
+    if (previous) {
+      session.harness.talk.endTurn({ turnId: previous, payload: { reason: "new-user-turn" } });
+    }
+    const turnId = session.harness.talk.startTurn({
+      turnId: `owned:${randomUUID()}`,
+      payload: {},
+    }).turnId;
+    ownedContext = { generation: owned.generation, turnId };
+  } else {
+    if (session.harness.forcedConsults.hasRecentNativeConsult(question)) {
+      return;
+    }
+    session.harness.forcedConsults.clearPending();
   }
-  session.harness.forcedConsults.clearPending();
-  const handle = session.harness.forcedConsults.prepare(question);
+  const handle = session.harness.forcedConsults.prepare(
+    question,
+    ownedContext
+      ? { id: `owned:${session.id}:${providerTurnId}`, context: ownedContext }
+      : undefined,
+  );
   if (!handle) {
     return;
   }
-  session.harness.forcedConsults.schedule(handle, FORCED_CONSULT_FALLBACK_DELAY_MS, () => {
-    if (!relaySessions.has(session.id)) {
-      return;
-    }
-    if (!session.toolCalls.tryAdmit([handle.id])) {
-      return;
-    }
-    const turnId = ensureRelayTurn(session);
-    const callId = handle.id;
-    const itemId = `forced-consult-item-${randomUUID()}`;
-    session.harness.forcedConsults.markStarted(handle);
-    session.harness.handleBargeIn(
-      { audioPlaybackActive: true, force: true },
-      noFallbackRelayOutputFlush,
-    );
-    broadcastToOwner(session.context, session.connId, {
-      relaySessionId: session.id,
-      type: "toolCall",
-      itemId,
-      callId,
-      name: REALTIME_VOICE_AGENT_CONSULT_TOOL_NAME,
-      forced: true,
-      args: {
-        question: handle.question,
-        context:
-          "The realtime provider produced a final user transcript without invoking openclaw_agent_consult, so OpenClaw is forcing the consult for realtime Talk.",
-        responseStyle: "Reply in a concise spoken tone.",
-      },
-      talkEvent: session.harness.talk.emit({
-        type: "tool.call",
+  session.harness.forcedConsults.schedule(
+    handle,
+    owned ? 0 : FORCED_CONSULT_FALLBACK_DELAY_MS,
+    () => {
+      if (!relaySessions.has(session.id)) {
+        return;
+      }
+      if (!session.toolCalls.tryAdmit([handle.id])) {
+        return;
+      }
+      const turnId = ownedContext?.turnId ?? ensureRelayTurn(session);
+      const callId = handle.id;
+      const itemId = `forced-consult-item-${randomUUID()}`;
+      session.harness.forcedConsults.markStarted(handle);
+      if (!owned) {
+        session.harness.handleBargeIn(
+          { audioPlaybackActive: true, force: true },
+          noFallbackRelayOutputFlush,
+        );
+      }
+      broadcastToOwner(session.context, session.connId, {
+        relaySessionId: session.id,
+        type: "toolCall",
         itemId,
         callId,
-        turnId,
-        payload: {
-          name: REALTIME_VOICE_AGENT_CONSULT_TOOL_NAME,
-          args: { question: handle.question },
-          forced: true,
+        name: REALTIME_VOICE_AGENT_CONSULT_TOOL_NAME,
+        forced: true,
+        args: {
+          question: handle.question,
+          context:
+            "The realtime provider produced a final user transcript without invoking openclaw_agent_consult, so OpenClaw is forcing the consult for realtime Talk.",
+          responseStyle: "Reply in a concise spoken tone.",
         },
-      }),
-    });
-  });
+        talkEvent: session.harness.talk.emit({
+          type: "tool.call",
+          itemId,
+          callId,
+          turnId,
+          payload: {
+            name: REALTIME_VOICE_AGENT_CONSULT_TOOL_NAME,
+            args: { question: handle.question },
+            forced: true,
+          },
+        }),
+      });
+    },
+  );
 }
 
 export function submitForcedConsultProviderResult(
@@ -322,6 +399,18 @@ export function submitForcedTalkRealtimeRelayToolResult(
     options?: RealtimeVoiceToolResultOptions;
   },
 ): void | Promise<void> {
+  if (session.ownedOutput) {
+    if (params.options?.willContinue === true || isWorkingToolResult(params.result)) {
+      return;
+    }
+    if (!session.harness.forcedConsults.isCancelled(forcedConsult)) {
+      deliverOwnedTalkResult(session, forcedConsult, params.callId);
+    }
+    session.harness.forcedConsults.markDelivered(forcedConsult);
+    clearRelayAgentToolCall(session, params.callId);
+    session.toolCalls.markAgentCompleted([params.callId]);
+    return;
+  }
   const cancelled = session.harness.forcedConsults.isCancelled(forcedConsult);
   const turnId = cancelled
     ? (session.toolCalls.cancelledTurnId(params.callId) ?? session.harness.talk.activeTurnId)

@@ -192,6 +192,7 @@ const VoiceIdString = Type.String({ pattern: "^[A-Za-z0-9_-]{1,128}$" });
 
 /** Creates a browser-facing Talk client session. */
 export const TalkClientCreateParamsSchema = closedObject({
+  hostOwnedOutput: Type.Optional(Type.Boolean()),
   sessionKey: Type.Optional(NonEmptyString),
   voiceSessionId: Type.Optional(VoiceIdString),
   provider: Type.Optional(Type.String()),
@@ -289,6 +290,7 @@ export const TalkAgentControlResultSchema = closedObject({
 
 /** Creates a gateway-managed Talk session for realtime, transcription, or relay use. */
 export const TalkSessionCreateParamsSchema = closedObject({
+  hostOwnedOutput: Type.Optional(Type.Boolean()),
   sessionKey: Type.Optional(Type.String()),
   spawnedBy: Type.Optional(NonEmptyString),
   provider: Type.Optional(Type.String()),
