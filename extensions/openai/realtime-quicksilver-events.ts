@@ -23,6 +23,7 @@ const turnDoneSchema = z
   .object({
     turn: z
       .object({
+        id: z.unknown().optional(),
         role: z.enum(["user", "assistant"]),
         transcript: z.string(),
       })
@@ -58,7 +59,7 @@ export type OpenAIQuicksilverInboundEvent =
   | { kind: "audio-cleared" }
   | { kind: "audio"; data: string }
   | { kind: "transcript-delta"; role: "user" | "assistant"; text: string }
-  | { kind: "transcript-done"; role: "user" | "assistant"; text: string }
+  | { kind: "transcript-done"; role: "user" | "assistant"; text: string; providerTurnId?: string }
   | { kind: "delegation"; id: string; prompt: string }
   | { kind: "error"; message: string; fatalAuth: boolean }
   | { kind: "unknown"; eventType: string };
@@ -149,7 +150,14 @@ export function parseOpenAIQuicksilverEvent(payload: string): OpenAIQuicksilverI
   if (eventType === "turn.done") {
     const turn = turnDoneSchema.safeParse(decoded);
     return turn.success
-      ? { kind: "transcript-done", role: turn.data.turn.role, text: turn.data.turn.transcript }
+      ? {
+          kind: "transcript-done",
+          role: turn.data.turn.role,
+          text: turn.data.turn.transcript,
+          ...(typeof turn.data.turn.id === "string" && turn.data.turn.id.trim()
+            ? { providerTurnId: turn.data.turn.id }
+            : {}),
+        }
       : { kind: "ignored", eventType };
   }
   if (eventType === "output_audio.delta") {

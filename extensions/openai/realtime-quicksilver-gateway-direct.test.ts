@@ -9,6 +9,7 @@ describe("GPT-Live Gateway direct transport", () => {
     const createPeer = vi.fn();
     const fetchImpl = vi.fn();
     const onAudio = vi.fn();
+    const onOutputOwnership = vi.fn();
     const onClose = vi.fn();
     const onReady = vi.fn();
     const runAgentConsult = Object.assign(
@@ -23,6 +24,8 @@ describe("GPT-Live Gateway direct transport", () => {
         instructions: "Speak briefly.",
         audioFormat: { encoding: "pcm16", sampleRateHz: 24_000, channels: 1 },
         onAudio,
+        hostOwnedOutput: true,
+        onOutputOwnership,
         onClearAudio: vi.fn(),
         onClose,
         onReady,
@@ -71,6 +74,7 @@ describe("GPT-Live Gateway direct transport", () => {
         session: {},
       });
       await connection;
+      expect(onOutputOwnership).toHaveBeenCalledExactlyOnceWith("provider");
 
       expect(onReady).toHaveBeenCalledOnce();
       expect(parseSent(connectedSocket)).toContainEqual({

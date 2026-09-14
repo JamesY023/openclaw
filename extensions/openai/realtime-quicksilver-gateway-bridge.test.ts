@@ -37,6 +37,158 @@ function readPendingAudio(pending: OpenAIQuicksilverPendingAudio): Buffer {
 }
 
 describe("GPT-Live gateway relay bridge", () => {
+  it.each([
+    { requested: true, authType: "oauth", model: OPENAI_GPT_LIVE_MODELS[0], owner: "host" },
+    { requested: true, authType: "api-key", model: OPENAI_GPT_LIVE_MODELS[0], owner: "provider" },
+    { requested: false, authType: "oauth", model: OPENAI_GPT_LIVE_MODELS[0], owner: "provider" },
+    { requested: true, authType: "oauth", model: "gpt-live-test-canary", owner: "provider" },
+  ] as const)("keeps $authType requested=$requested $model output with $owner", async (mode) => {
+    let callbacks!: OpenAIQuicksilverAudioPeerCallbacks;
+    const socket = new FakeSocket("manual");
+    const events: string[] = [];
+    const onAudio = vi.fn();
+    const onTranscript = vi.fn();
+    const onOutputOwnership = vi.fn(() => events.push("ownership"));
+    const onClearAudio = vi.fn();
+    const onEvent = vi.fn();
+    const runAgentConsult = Object.assign(
+      vi.fn(async () => ({ text: "Done" })),
+      {
+        adoptCompletionClaims: vi.fn(),
+        revokeRequesterFinal: vi.fn(),
+        claimAppend: vi.fn(() => true),
+      },
+    );
+    const peer = {
+      createOffer: vi.fn(async () => "v=offer\r\n"),
+      applyAnswer: vi.fn(async () => undefined),
+      adoptPendingAudio: vi.fn(),
+      sendAudio: vi.fn(),
+      close: vi.fn(),
+    };
+    const bridge = new OpenAIQuicksilverGatewayBridge(
+      {
+        providerConfig: {},
+        model: mode.model,
+        hostOwnedOutput: mode.requested,
+        onOutputOwnership,
+        onAudio,
+        onTranscript,
+        onClearAudio,
+        onEvent,
+        runAgentConsult,
+        logger: { debug: vi.fn(), warn: vi.fn() },
+        resolveAuth: async () =>
+          mode.authType === "oauth"
+            ? { type: "oauth", token: "test-token", accountId: "test-account" }
+            : { type: "api-key", token: "test-key" },
+        createPeer: async (value) => {
+          events.push("peer");
+          callbacks = value;
+          return peer;
+        },
+        fetchImpl: vi.fn(async () => createCallResponse("v=answer\r\n", "rtc_owned")),
+        webSocketFactory: () => {
+          queueMicrotask(() => {
+            socket.readyState = 1;
+            socket.emit("open");
+          });
+          return socket;
+        },
+      },
+      openAIRealtimeHost,
+    );
+    try {
+      await bridge.connect();
+      expect(onOutputOwnership).toHaveBeenCalledExactlyOnceWith(mode.owner);
+      expect(events).toEqual(["ownership", "peer"]);
+      bridge.sendAudio(Buffer.from([1, 2]));
+      expect(peer.sendAudio).toHaveBeenCalledExactlyOnceWith(Buffer.from([1, 2]));
+      callbacks.onAudio(Buffer.from([3, 4]));
+      callbacks.onRtpPacket?.();
+      emitSideband(socket, { type: "output_audio_buffer.cleared" });
+      emitSideband(socket, { type: "output_transcript.added", item: { text: "Ambient" } });
+      emitSideband(socket, {
+        type: "turn.done",
+        turn: { role: "assistant", transcript: "Ambient", id: "ambient-1" },
+      });
+      emitSideband(socket, {
+        type: "delegation.created",
+        item: {
+          type: "delegation",
+          target: "client",
+          id: "native-1",
+          content: [{ type: "input_text", text: "Task" }],
+        },
+      });
+      if (mode.owner === "host") {
+        expect(onAudio).not.toHaveBeenCalled();
+        expect(onTranscript).not.toHaveBeenCalled();
+        expect(onClearAudio).not.toHaveBeenCalled();
+        expect(onEvent).not.toHaveBeenCalled();
+        expect(runAgentConsult).not.toHaveBeenCalled();
+        expect(runAgentConsult.adoptCompletionClaims).not.toHaveBeenCalled();
+      } else {
+        expect(onAudio).toHaveBeenCalledExactlyOnceWith(Buffer.from([3, 4]));
+        expect(runAgentConsult).toHaveBeenCalledOnce();
+      }
+      emitSideband(socket, { type: "input_transcript.added", item: { text: "Task" } });
+      emitSideband(socket, {
+        type: "turn.done",
+        turn: { role: "user", transcript: "Task", id: "user-turn-1" },
+      });
+      expect(onTranscript).toHaveBeenLastCalledWith("user", "Task", true, {
+        providerTurnId: "user-turn-1",
+      });
+      if (mode.owner === "host") {
+        emitSideband(socket, {
+          type: "delegation.created",
+          item: {
+            type: "delegation",
+            target: "client",
+            id: "native-2",
+            content: [{ type: "input_text", text: "Task" }],
+          },
+        });
+        bridge.sendAudio(Buffer.from([9, 10]));
+        emitSideband(socket, {
+          type: "turn.done",
+          turn: { role: "user", transcript: "Task", id: "user-turn-2" },
+        });
+        expect(onTranscript).toHaveBeenLastCalledWith("user", "Task", true, {
+          providerTurnId: "user-turn-2",
+        });
+        expect(peer.sendAudio).toHaveBeenLastCalledWith(Buffer.from([9, 10]));
+        expect(runAgentConsult).not.toHaveBeenCalled();
+      }
+      for (const id of [undefined, null, 42, "", "  "]) {
+        onTranscript.mockClear();
+        emitSideband(socket, {
+          type: "turn.done",
+          turn: { role: "user", transcript: "No native ID", id },
+        });
+        expect(onTranscript).toHaveBeenCalledExactlyOnceWith("user", "No native ID", true);
+      }
+      bridge.sendUserMessage("A host-owned reply must not return to the provider");
+      if (mode.owner === "host") {
+        expect(parseSent(socket)).toEqual([]);
+      }
+      bridge.sendAudio(Buffer.from([5, 6]));
+      expect(peer.sendAudio).toHaveBeenLastCalledWith(Buffer.from([5, 6]));
+      expect(peer.close).not.toHaveBeenCalled();
+      bridge.close();
+      if (mode.owner === "host") {
+        callbacks.onAudio(Buffer.from([7, 8]));
+        emitSideband(socket, { type: "output_transcript.added", item: { text: "Late" } });
+        expect(onAudio).not.toHaveBeenCalled();
+        expect(runAgentConsult).not.toHaveBeenCalled();
+        expect(runAgentConsult.revokeRequesterFinal).not.toHaveBeenCalled();
+      }
+    } finally {
+      bridge.close();
+    }
+  });
+
   function createPendingPeerBridge(params?: {
     onClose?: (reason: "completed" | "error") => void;
     onError?: (error: Error) => void;

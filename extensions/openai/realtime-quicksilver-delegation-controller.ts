@@ -54,13 +54,14 @@ interface LifecycleBoundAgentConsultRunner {
 
 type OpenAIQuicksilverDelegationControllerOptions = {
   getSocket: () => OpenAIQuicksilverSocket | undefined;
+  hostOwnedOutput?: boolean;
   logger: Pick<PluginLogger, "debug" | "warn">;
   model: string;
   onError?: (error: Error) => void;
   onFatalError: (error: Error) => void;
   onAudio?: (audio: Buffer) => void;
   onSessionStarted?: (expiresAt: number | undefined) => void;
-  onTranscript?: (role: "user" | "assistant", text: string, done: boolean) => void;
+  onTranscript?: RealtimeVoiceGatewayControl["onTranscript"];
   handleDelegationInput?: RealtimeVoiceGatewayControl["handleDelegationInput"];
   onWireEventType?: (eventType: string) => void;
   runAgentConsult: LifecycleBoundAgentConsultRunner;
@@ -112,8 +113,11 @@ export class OpenAIQuicksilverDelegationController {
     private readonly options: OpenAIQuicksilverDelegationControllerOptions,
     private readonly formatErrorMessage: OpenAIRealtimeHost["formatErrorMessage"],
   ) {
-    this.completionClaimsAdopted = options.runAgentConsult.adoptCompletionClaims !== undefined;
-    options.runAgentConsult.adoptCompletionClaims?.();
+    this.completionClaimsAdopted =
+      !options.hostOwnedOutput && options.runAgentConsult.adoptCompletionClaims !== undefined;
+    if (!options.hostOwnedOutput) {
+      options.runAgentConsult.adoptCompletionClaims?.();
+    }
     if (options.signal.aborted) {
       this.onSessionAbort();
     } else {
@@ -131,7 +135,7 @@ export class OpenAIQuicksilverDelegationController {
     }
     const payload = rawDataToString(data);
     const event = parseOpenAIQuicksilverEvent(payload);
-    if (event) {
+    if (event && !this.suppressesOutput(event)) {
       const eventType = projectWireEventType(event);
       if (eventType) {
         this.options.onWireEventType?.(eventType);
@@ -141,7 +145,12 @@ export class OpenAIQuicksilverDelegationController {
   }
 
   handleEvent(event: OpenAIQuicksilverInboundEvent): void {
-    if (this.stopped || event.kind === "ignored" || event.kind === "audio-cleared") {
+    if (
+      this.stopped ||
+      event.kind === "ignored" ||
+      event.kind === "audio-cleared" ||
+      this.suppressesOutput(event)
+    ) {
       return;
     }
     if (event.kind === "unknown") {
@@ -153,8 +162,16 @@ export class OpenAIQuicksilverDelegationController {
       return;
     }
     if (event.kind === "transcript-delta" || event.kind === "transcript-done") {
-      this.appendTranscript(event);
-      this.options.onTranscript?.(event.role, event.text, event.kind === "transcript-done");
+      if (!this.options.hostOwnedOutput) {
+        this.appendTranscript(event);
+      }
+      if (event.kind === "transcript-done" && event.providerTurnId !== undefined) {
+        this.options.onTranscript?.(event.role, event.text, true, {
+          providerTurnId: event.providerTurnId,
+        });
+      } else {
+        this.options.onTranscript?.(event.role, event.text, event.kind === "transcript-done");
+      }
       return;
     }
     if (event.kind === "error") {
@@ -185,7 +202,7 @@ export class OpenAIQuicksilverDelegationController {
 
   sendSessionContext(text: string, channel: "speakable" | "commentary"): void {
     const content = text.trim();
-    if (content) {
+    if (content && !this.options.hostOwnedOutput) {
       // Standalone speech must not become the result of whichever delegation is active.
       this.sendAppend({ type: "session.context.append" }, content, channel);
     }
@@ -206,6 +223,17 @@ export class OpenAIQuicksilverDelegationController {
       return;
     }
     this.markStopped();
+  }
+
+  private suppressesOutput(event: OpenAIQuicksilverInboundEvent): boolean {
+    return (
+      this.options.hostOwnedOutput === true &&
+      (event.kind === "audio" ||
+        event.kind === "audio-cleared" ||
+        event.kind === "delegation" ||
+        ((event.kind === "transcript-delta" || event.kind === "transcript-done") &&
+          event.role === "assistant"))
+    );
   }
 
   private appendTranscript(
@@ -490,7 +518,9 @@ export class OpenAIQuicksilverDelegationController {
 
   private revokeRequesterFinal(): void {
     this.requesterFinalOwner = undefined;
-    this.options.runAgentConsult.revokeRequesterFinal?.();
+    if (!this.options.hostOwnedOutput) {
+      this.options.runAgentConsult.revokeRequesterFinal?.();
+    }
   }
 
   private sendAppend(

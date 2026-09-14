@@ -111,6 +111,7 @@ export class OpenAIQuicksilverGatewayBridge implements RealtimeVoiceBridge {
   private connectPromise: Promise<void> | undefined;
   private delegations: OpenAIQuicksilverDelegationController | undefined;
   private connected = false;
+  private hostOwnedOutput = false;
   private closed = false;
   private closeNotified = false;
   private peer: OpenAIQuicksilverAudioPeerContract | undefined;
@@ -190,6 +191,13 @@ export class OpenAIQuicksilverGatewayBridge implements RealtimeVoiceBridge {
     let auth: OpenAIQuicksilverAuth;
     try {
       auth = await waitForConnectStep(this.config.resolveAuth(), connectSignal);
+      connectSignal.throwIfAborted();
+      this.hostOwnedOutput =
+        this.config.hostOwnedOutput === true &&
+        auth.type === "oauth" &&
+        isSupportedOpenAIGptLiveModel(this.config.model);
+      this.config.onOutputOwnership?.(this.hostOwnedOutput ? "host" : "provider");
+      connectSignal.throwIfAborted();
     } catch (error) {
       this.releaseResources("abort");
       throw this.redactAdmissionError(error);
@@ -273,10 +281,18 @@ export class OpenAIQuicksilverGatewayBridge implements RealtimeVoiceBridge {
           this.providerReady = true;
           this.notifyReady();
         },
-        onAudio: (audio) => this.config.onAudio(audio),
+        onAudio: (audio) => {
+          if (!this.hostOwnedOutput) {
+            this.config.onAudio(audio);
+          }
+        },
         onError: (error) => this.fail(error),
         onMediaError: () => this.config.logger.debug?.("GPT-Live WebRTC media packet dropped"),
-        onRtpPacket: () => this.config.onEvent?.({ direction: "server", type: "output_audio.rtp" }),
+        onRtpPacket: () => {
+          if (!this.hostOwnedOutput) {
+            this.config.onEvent?.({ direction: "server", type: "output_audio.rtp" });
+          }
+        },
       },
       connectSignal,
     );
@@ -385,6 +401,7 @@ export class OpenAIQuicksilverGatewayBridge implements RealtimeVoiceBridge {
     return new OpenAIQuicksilverDelegationController(
       {
         getSocket: () => this.sideband?.socket,
+        hostOwnedOutput: this.hostOwnedOutput,
         logger: this.config.logger,
         model: this.config.model,
         onError: this.config.onError,
@@ -400,7 +417,7 @@ export class OpenAIQuicksilverGatewayBridge implements RealtimeVoiceBridge {
           this.notifyReady();
           params?.onSessionStarted?.();
         },
-        onTranscript: (role, text, done) => this.config.onTranscript?.(role, text, done),
+        onTranscript: this.config.onTranscript,
         handleDelegationInput: this.config.handleDelegationInput,
         onWireEventType: (eventType) => {
           this.config.onEvent?.({ direction: "server", type: eventType });
