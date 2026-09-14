@@ -15,7 +15,6 @@ import type {
   RealtimeVoiceBridgeEvent,
   RealtimeVoiceProviderConfig,
   RealtimeVoiceResponseOutcome,
-  RealtimeVoiceRole,
   RealtimeVoiceTool,
   RealtimeVoiceToolCallEvent,
   RealtimeVoiceToolResultOptions,
@@ -76,7 +75,9 @@ export type RealtimeVoiceBridgeSessionParams = {
   markStrategy?: RealtimeVoiceMarkStrategy;
   triggerGreetingOnReady?: boolean;
   tools?: RealtimeVoiceTool[];
-  onTranscript?: (role: RealtimeVoiceRole, text: string, isFinal: boolean) => void;
+  hostOwnedOutput?: boolean;
+  onOutputOwnership?: RealtimeVoiceBridgeCallbacks["onOutputOwnership"];
+  onTranscript?: RealtimeVoiceBridgeCallbacks["onTranscript"];
   handleDelegationInput?: RealtimeVoiceBridgeCallbacks["handleDelegationInput"];
   onEvent?: (event: RealtimeVoiceBridgeEvent) => void;
   onResponseDone?: (outcome: RealtimeVoiceResponseOutcome) => void;
@@ -201,6 +202,8 @@ export function createRealtimeVoiceBridgeSession(
     instructions: params.instructions,
     language: params.language,
     autoRespondToAudio: params.autoRespondToAudio,
+    ...(params.hostOwnedOutput !== undefined ? { hostOwnedOutput: params.hostOwnedOutput } : {}),
+    ...(params.onOutputOwnership ? { onOutputOwnership: params.onOutputOwnership } : {}),
     interruptResponseOnInputAudio: params.interruptResponseOnInputAudio,
     tools: params.tools,
     onAudio: (audio, metadata) => {

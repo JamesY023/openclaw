@@ -315,11 +315,16 @@ export function createRealtimeVoiceSessionHarness<TForcedConsultContext = unknow
           ensureTurn();
           bridgeParams.onResponseRequest?.();
         },
-        onTranscript: (role, text, isFinal) => {
+        onTranscript: (role, text, isFinal, metadata) => {
           if (isFinal) {
             harness.recordTranscript(role, text);
           }
-          bridgeParams.onTranscript?.(role, text, isFinal);
+          bridgeParams.onTranscript?.(
+            role,
+            text,
+            isFinal,
+            ...(metadata ? ([metadata] as const) : []),
+          );
         },
         onEvent: (event) => {
           claimResponseEvent(event);

@@ -29,7 +29,7 @@ export const RELAY_TRANSCRIPT_ECHO_LOOKBACK_MS = 12_000;
 export const noFallbackRelayOutputFlush = () => {};
 
 export type TalkRealtimeRelayEventPayload =
-  | { relaySessionId: string; type: "ready" }
+  | { relaySessionId: string; type: "ready"; outputOwnership?: "host" | "provider" }
   | { relaySessionId: string; type: "responseStarted"; turnId: string }
   | { relaySessionId: string; type: "inputAudio"; byteLength: number }
   | {

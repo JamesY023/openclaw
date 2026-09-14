@@ -18,6 +18,39 @@ function expectBridgeRequest(
 }
 
 describe("realtime voice bridge session runtime", () => {
+  it("preserves negotiated output ownership and exact provider turn identity", () => {
+    let request: Parameters<RealtimeVoiceProviderPlugin["createBridge"]>[0] | undefined;
+    const ownership = vi.fn();
+    const transcript = vi.fn();
+    const session = createRealtimeVoiceBridgeSession({
+      provider: {
+        id: "test",
+        label: "Test",
+        isConfigured: () => true,
+        createBridge: (value) => {
+          request = value;
+          return makeBridge();
+        },
+      },
+      providerConfig: {},
+      audioSink: { sendAudio: vi.fn() },
+      hostOwnedOutput: true,
+      onOutputOwnership: ownership,
+      onTranscript: transcript,
+    });
+    const observed = expectBridgeRequest(request);
+    expect(observed.hostOwnedOutput).toBe(true);
+    observed.onOutputOwnership?.("host");
+    observed.onTranscript?.("user", "same words", true, { providerTurnId: "turn-A" });
+    observed.onTranscript?.("user", "same words", true, { providerTurnId: "turn-B" });
+    expect(ownership).toHaveBeenCalledExactlyOnceWith("host");
+    expect(transcript.mock.calls.map((call) => call[3])).toEqual([
+      { providerTurnId: "turn-A" },
+      { providerTurnId: "turn-B" },
+    ]);
+    session.close();
+  });
+
   it.each(["sink", "provider", "session"] as const)(
     "fences scoped transport acknowledgments after the %s closes",
     (closing) => {

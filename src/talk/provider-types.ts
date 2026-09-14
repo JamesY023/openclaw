@@ -189,7 +189,14 @@ export type RealtimeVoiceBridgeCallbacks = {
   onClearAudio: (reason?: RealtimeVoiceAudioClearReason) => void;
   /** Scoped acknowledgments are valid only for the provider connection that emitted the mark. */
   onMark?: (markName: string, acknowledge?: () => void) => void;
-  onTranscript?: (role: RealtimeVoiceRole, text: string, isFinal: boolean) => void;
+  onTranscript?: (
+    role: RealtimeVoiceRole,
+    text: string,
+    isFinal: boolean,
+    metadata?: { providerTurnId?: string },
+  ) => void;
+  /** Resolved authentication decides output ownership before any provider frames arrive. */
+  onOutputOwnership?: (owner: "host" | "provider") => void;
   /** Synchronously admits native control; only consult permits task fallthrough. Respond is call-bound. */
   handleDelegationInput?: (
     text: string,
@@ -239,6 +246,7 @@ export type RealtimeVoiceAgentConsultRunner = (params: {
 }) => Promise<{ text: string }>;
 
 export type RealtimeVoiceBridgeCreateRequest = RealtimeVoiceBridgeCallbacks & {
+  hostOwnedOutput?: boolean;
   cfg?: OpenClawConfig;
   /** Host-selected agent scope for provider auth and agent-owned bridge state. */
   agentId?: string;
