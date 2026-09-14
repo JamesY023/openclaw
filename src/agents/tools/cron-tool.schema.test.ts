@@ -44,6 +44,20 @@ function propertyAt(
 }
 
 describe("createCronToolSchema", () => {
+  it("Skynet scratch schema is advertised only to the current scheduled job", () => {
+    const args = { action: "scratch_set", content: "watermark", expectedRevision: 0 };
+    expect(Value.Check(createCronTool({ selfRemoveOnlyJobId: "job-own" }).parameters, args)).toBe(
+      true,
+    );
+    expect(Value.Check(createCronTool().parameters, args)).toBe(false);
+    expect(
+      Value.Check(createCronTool({ selfRemoveOnlyJobId: "job-own" }).parameters, {
+        ...args,
+        expectedRevision: -1,
+      }),
+    ).toBe(false);
+  });
+
   const schema = createCronTool().parameters;
   const schemaRecord = schema as unknown as Record<string, unknown>;
   const providerSchemaRecord = normalizeToolParameterSchema(schema, {

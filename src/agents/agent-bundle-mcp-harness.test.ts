@@ -207,6 +207,35 @@ beforeEach(() => {
 });
 
 describe("materializeStaticMcpToolsForHarnessRunCore", () => {
+  it.each([
+    { creator: ["*"], requested: ["other__tool"], expected: [] },
+    { creator: ["other__tool"], requested: ["user-mail__inbox"], expected: [] },
+    {
+      creator: ["user-mail__inbox"],
+      requested: ["user-mail__inbox"],
+      expected: ["user-mail__inbox"],
+    },
+  ])(
+    "Skynet finite discovery intersects creator and requested caps: $creator / $requested",
+    async ({ creator, requested, expected }) => {
+      const runtime = makeRuntime({ sessionId: "finite-scope", requesterSenderId: "unused" });
+      runtime.peekCatalog()!.servers["user-mail"]!.codexApprovalMode = "approve";
+      delete runtime.requesterScope;
+      mocks.acquireSessionMcpRuntime.mockResolvedValue({
+        runtime,
+        releaseLease: runtime.acquireLease?.() ?? (() => {}),
+      });
+      const result = await materializeStaticMcpToolsForHarnessRunCore({
+        sessionId: "finite-scope",
+        workspaceDir: "/workspace",
+        toolsAllow: creator,
+        additionalToolsAllow: requested,
+      });
+      expect(result.tools.map((tool) => tool.name)).toEqual(expected);
+      await result.dispose();
+    },
+  );
+
   it("materializes static tools without carrying requester identity and applies the stored cap", async () => {
     const runtime = makeRuntime({ sessionId: "scheduled", requesterSenderId: "unused" });
     delete runtime.requesterScope;

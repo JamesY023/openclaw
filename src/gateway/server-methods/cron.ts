@@ -722,10 +722,12 @@ export const cronHandlers: GatewayRequestHandlers = {
     const job = await context.cron.readJob(jobId);
     if (
       !job ||
+      (callerScope?.currentJobId && callerScope.currentJobId !== jobId) ||
       !cronJobMatchesCallerScope({
         job,
         callerScope,
         defaultAgentId: context.cron.getDefaultAgentId(),
+        allowCurrentJob: true,
       })
     ) {
       respondCronJobNotFound(respond, jobId);
@@ -759,19 +761,30 @@ export const cronHandlers: GatewayRequestHandlers = {
     const job = await context.cron.readJob(jobId);
     if (
       !job ||
+      (callerScope?.currentJobId && callerScope.currentJobId !== jobId) ||
       !cronJobMatchesCallerScope({
         job,
         callerScope,
         defaultAgentId: context.cron.getDefaultAgentId(),
+        allowCurrentJob: true,
       })
     ) {
       respondCronJobNotFound(respond, jobId);
+      return;
+    }
+    if (callerScope?.currentJobId && !Number.isSafeInteger(p.expectedRevision)) {
+      respondInvalidCronParams(
+        respond,
+        "cron.scratch.set",
+        "Scheduled scratch writes require expectedRevision",
+      );
       return;
     }
     try {
       const commitGuard = resolveCronMutationCommitGuard(client, context, {
         callerScope,
         jobId,
+        allowCurrentJob: true,
       });
       const result = await context.cron.writeScratch(jobId, {
         content: p.content,

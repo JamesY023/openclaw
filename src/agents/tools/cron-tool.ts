@@ -44,6 +44,8 @@ import {
   assertInheritedCronToolCaptureReady,
   capCronJobToolsAllowOnCreate,
   cronCreateRequiresCreatorAuthority,
+  classifyExplicitToolsAllow,
+  explicitFiniteToolsNeedResolution,
   resolveCronCreatorExecToolTarget,
 } from "./cron-tool-creator-cap.js";
 import {
@@ -107,7 +109,12 @@ function assertCronSelfRemoveScope(
   params: Record<string, unknown>,
 ) {
   const selfRemoveOnlyJobId = readCronSelfRemoveOnlyJobId(opts);
-  if (!selfRemoveOnlyJobId || isCronSelfIntrospectionAction(action)) {
+  if (
+    !selfRemoveOnlyJobId ||
+    isCronSelfIntrospectionAction(action) ||
+    action === "scratch_get" ||
+    action === "scratch_set"
+  ) {
     return;
   }
   if (["next_check", "get", "remove", "runs"].includes(action)) {
@@ -215,7 +222,7 @@ DELIVERY {mode:"none"|"announce"|"webhook",channel?,to?,threadId?,bestEffort?,co
 
 FAILURE ALERTS: jobs with a failure route default to alerting after 2 consecutive execution failures with a 1h cooldown. Route order: job failureAlert fields, delivery.failureDestination over global cron.failureAlert destination fields, then primary announce. failureAlert:false disables execution/delivery alerts, not the auto-disable safety notice; a failureAlert object activates/tunes. bestEffort suppresses inherited execution alerts. Required completion-delivery failure uses only an alternate route, bypasses after, and shares the execution-alert cooldown from the first failure; it does not increment the execution streak.
 
-Job wakeMode (main jobs): "now"(default)|"next-heartbeat". Restricted automation-run sessions: self status/list/get/runs/remove + own next_check only. jobId canonical (id=compat). contextMessages 0-10 embeds recent chat lines into reminder text.`;
+Job wakeMode (main jobs): "now"(default)|"next-heartbeat". Restricted automation-run sessions: self status/list/get/runs/remove + own next_check and scratch only. Within a scheduled run, scratch_get reads its private durable checkpoint (content/currentRevision); scratch_set replaces content with required expectedRevision. On revision-conflict, read again before writing. No jobId or gateway overrides. Scratch persists across fresh runs; save watermarks only after their work completes. jobId canonical (id=compat). contextMessages 0-10 embeds recent chat lines into reminder text.`;
 }
 
 export function createCronTool(opts?: CronToolOptions, deps?: CronToolDeps): AnyAgentTool {
@@ -233,6 +240,7 @@ export function createCronTool(opts?: CronToolOptions, deps?: CronToolDeps): Any
     parameters: createCronToolSchema({
       agentSessionKey: opts?.agentSessionKey,
       triggersEnabled,
+      scratch: Boolean(readCronSelfRemoveOnlyJobId(opts)),
       management: managementAuthority
         ? managementAuthority.managementOnly
           ? "only"
@@ -270,6 +278,28 @@ export function createCronTool(opts?: CronToolOptions, deps?: CronToolDeps): Any
         throw new Error(
           "This turn can only list, get, update, run, or remove automations. Use the Automations page for other actions.",
         );
+      }
+      if (action === "scratch_get" || action === "scratch_set") {
+        const allowed =
+          action === "scratch_get" ? ["action"] : ["action", "content", "expectedRevision"];
+        if (
+          !readCronSelfRemoveOnlyJobId(opts) ||
+          Object.keys(params).some((key) => !allowed.includes(key))
+        ) {
+          throw new Error(
+            "Scratch accepts only current-automation checkpoint arguments; no jobId or gateway overrides.",
+          );
+        }
+        if (
+          action === "scratch_set" &&
+          (typeof params.content !== "string" ||
+            !Number.isSafeInteger(params.expectedRevision) ||
+            Number(params.expectedRevision) < 0)
+        ) {
+          throw new Error(
+            "scratch_set requires string content and a nonnegative integer expectedRevision.",
+          );
+        }
       }
       assertCronSelfRemoveScope(opts, action, params);
       const parsedGatewayOpts = readGatewayCallOptions(params);
@@ -331,6 +361,23 @@ export function createCronTool(opts?: CronToolOptions, deps?: CronToolDeps): Any
 
       return await withGatewayToolCallerIdentity(callerIdentity, async () => {
         switch (action) {
+          case "scratch_get":
+          case "scratch_set": {
+            const jobId = readCronSelfRemoveOnlyJobId(opts);
+            return jsonResult(
+              await callGateway(
+                action === "scratch_get" ? "cron.scratch.get" : "cron.scratch.set",
+                gatewayOpts,
+                {
+                  jobId,
+                  ...(action === "scratch_set"
+                    ? { content: params.content, expectedRevision: params.expectedRevision }
+                    : {}),
+                },
+                { requireAgentRuntimeIdentity: true, signal: operationSignal },
+              ),
+            );
+          }
           case "status": {
             const result = await callGateway("cron.status", gatewayOpts, {});
             return jsonResult(
@@ -464,15 +511,34 @@ export function createCronTool(opts?: CronToolOptions, deps?: CronToolDeps): Any
               creatorToolAllowlistCaptureRef: opts?.creatorToolAllowlistCaptureRef,
               unavailableReason: opts?.creatorAuthorityUnavailableReason,
             });
+            const payload = isRecord(job.payload) ? job.payload : undefined;
             const resolvedAuthority =
               requiresCreatorAuthority && opts?.resolveCreatorToolAuthority
-                ? await opts.resolveCreatorToolAuthority({ signal: operationSignal })
+                ? await opts.resolveCreatorToolAuthority({
+                    signal: operationSignal,
+                    ...(classifyExplicitToolsAllow(payload) === "finite" &&
+                    Array.isArray(payload?.toolsAllow)
+                      ? {
+                          toolsAllow: payload.toolsAllow.filter(
+                            (tool): tool is string => typeof tool === "string",
+                          ),
+                        }
+                      : {}),
+                  })
                 : undefined;
             operationSignal?.throwIfAborted();
             const creatorToolAllowlist = resolvedAuthority?.tools ?? opts?.creatorToolAllowlist;
             const creatorToolAllowlistCaptureRef = resolvedAuthority
               ? { value: resolvedAuthority.provenance }
               : opts?.creatorToolAllowlistCaptureRef;
+            if (
+              resolvedAuthority &&
+              explicitFiniteToolsNeedResolution(payload, creatorToolAllowlist)
+            ) {
+              throw new Error(
+                "Requested automation tools are unavailable to this creator. No automation changes were saved.",
+              );
+            }
             capCronJobToolsAllowOnCreate(job, creatorToolAllowlist);
             assertInheritedCronToolCaptureReady(job, creatorToolAllowlistCaptureRef);
             if (job && typeof job === "object") {

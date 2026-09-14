@@ -6,6 +6,8 @@ import {
   INCOMPLETE_CRON_CREATOR_AUTHORITY_MESSAGE,
   isCronCreatorToolCaptureComplete,
   planCronJobUpdatePatch,
+  classifyExplicitToolsAllow,
+  explicitFiniteToolsNeedResolution,
 } from "./cron-tool-creator-cap.js";
 import type {
   CronCreatorToolAllowlistEntry,
@@ -64,6 +66,7 @@ async function prepareCronJobUpdateForGateway(params: {
   creatorAuthorityComplete: boolean;
   resolveCreatorToolAuthority?: (options?: {
     signal?: AbortSignal;
+    toolsAllow?: string[];
   }) => Promise<CronCreatorToolAuthoritySnapshot>;
   operationSignal?: AbortSignal;
   creatorAuthorityUnavailableReason?: "queued-local-operator-configured-mcp";
@@ -110,9 +113,22 @@ async function prepareCronJobUpdateForGateway(params: {
     if (!params.resolveCreatorToolAuthority) {
       throw new Error("cron update requires complete creator tool authority");
     }
+    const payload = isRecord(params.patch.payload) ? params.patch.payload : undefined;
     resolvedAuthority = await params.resolveCreatorToolAuthority({
       signal: params.operationSignal,
+      ...(classifyExplicitToolsAllow(payload) === "finite" && Array.isArray(payload?.toolsAllow)
+        ? {
+            toolsAllow: payload.toolsAllow.filter(
+              (tool): tool is string => typeof tool === "string",
+            ),
+          }
+        : {}),
     });
+    if (explicitFiniteToolsNeedResolution(payload, resolvedAuthority.tools)) {
+      throw new Error(
+        "Requested automation tools are unavailable to this creator. No automation changes were saved.",
+      );
+    }
     params.operationSignal?.throwIfAborted();
     finalPlan = planCronJobUpdatePatch({
       patch: params.patch,
@@ -145,6 +161,7 @@ export async function updateCronJobFromAgentTool(params: {
   creatorToolAllowlistCaptureRef?: CronToolsAllowCaptureRef;
   resolveCreatorToolAuthority?: (options?: {
     signal?: AbortSignal;
+    toolsAllow?: string[];
   }) => Promise<CronCreatorToolAuthoritySnapshot>;
   withCreatorAuthorityProvenance?: <T>(
     authority: CronCreatorToolAuthoritySnapshot,
@@ -158,7 +175,7 @@ export async function updateCronJobFromAgentTool(params: {
   const callerIncludedPayloadPatch = isRecord(params.patch.payload);
   let creatorAuthorityPromise: Promise<CronCreatorToolAuthoritySnapshot> | undefined;
   const resolveCreatorToolAuthority = params.resolveCreatorToolAuthority
-    ? (options?: { signal?: AbortSignal }) =>
+    ? (options?: { signal?: AbortSignal; toolsAllow?: string[] }) =>
         (creatorAuthorityPromise ??= params.resolveCreatorToolAuthority!(options))
     : undefined;
   for (let attempt = 0; attempt < 2; attempt += 1) {

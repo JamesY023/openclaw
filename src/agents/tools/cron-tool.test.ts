@@ -115,6 +115,102 @@ describe("cron tool", () => {
     return call.params;
   }
 
+  it.each(["add", "update"])("Skynet finite authority scopes %s discovery", async (action) => {
+    const resolveCreatorToolAuthority = vi.fn(async () =>
+      resolvedCreatorAuthority(["configured__lookup"]),
+    );
+    callGatewayMock.mockResolvedValue({
+      payload: { kind: "agentTurn", message: "old" },
+      configRevision: "rev",
+    });
+    const tool = createTestCronTool({
+      agentSessionKey: "agent:main:main",
+      creatorToolAllowlist: ["read"],
+      resolveCreatorToolAuthority,
+    });
+    await tool.execute("scoped", {
+      action,
+      jobId: "job-1",
+      job: {
+        ...buildReminderAgentTurnJob(),
+        payload: { kind: "agentTurn", message: "check", toolsAllow: ["configured__lookup"] },
+      },
+    });
+    expect(resolveCreatorToolAuthority).toHaveBeenCalledWith(
+      expect.objectContaining({ toolsAllow: ["configured__lookup"] }),
+    );
+    expect(readGatewayCall(action === "update" ? 1 : 0).params).toMatchObject(
+      action === "update"
+        ? { patch: { payload: { toolsAllow: ["configured__lookup"] } } }
+        : { payload: { toolsAllow: ["configured__lookup"] } },
+    );
+  });
+
+  it.each(["add", "update"])(
+    "Skynet unresolved finite tools reject %s without saving",
+    async (action) => {
+      const resolveCreatorToolAuthority = vi.fn(async () => resolvedCreatorAuthority(["read"]));
+      callGatewayMock.mockResolvedValue({
+        payload: { kind: "agentTurn", message: "old" },
+        configRevision: "rev",
+      });
+      const tool = createTestCronTool({
+        agentSessionKey: "agent:main:main",
+        creatorToolAllowlist: ["read"],
+        resolveCreatorToolAuthority,
+      });
+      await expect(
+        tool.execute("unavailable", {
+          action,
+          jobId: "job-1",
+          job: {
+            ...buildReminderAgentTurnJob(),
+            payload: { kind: "agentTurn", message: "check", toolsAllow: ["configured__missing"] },
+          },
+        }),
+      ).rejects.toThrow("unavailable to this creator");
+      expect(callGatewayMock.mock.calls.map((call) => call[0].method)).not.toContain(
+        `cron.${action}`,
+      );
+    },
+  );
+
+  it.each(["scratch_get", "scratch_set"])(
+    "Skynet scheduled %s uses only its own checkpoint",
+    async (action) => {
+      callGatewayMock.mockResolvedValue({ ok: true, currentRevision: 1 });
+      const tool = createTestCronTool({
+        agentSessionKey: "agent:main:cron:job-own",
+        selfRemoveOnlyJobId: "job-own",
+      });
+      await tool.execute("scratch", {
+        action,
+        ...(action === "scratch_set" ? { content: "watermark", expectedRevision: 0 } : {}),
+      });
+      expect(readGatewayCall().params).toEqual({
+        jobId: "job-own",
+        ...(action === "scratch_set" ? { content: "watermark", expectedRevision: 0 } : {}),
+      });
+      expect(readGatewayCall().method).toBe(
+        action === "scratch_get" ? "cron.scratch.get" : "cron.scratch.set",
+      );
+    },
+  );
+
+  it("Skynet scratch rejects nonworkers, cross-job and gateway overrides, and missing revision", async () => {
+    for (const args of [
+      { action: "scratch_get", jobId: "other" },
+      { action: "scratch_get", gatewayUrl: "http://other" },
+      { action: "scratch_set", content: "watermark" },
+    ]) {
+      await expect(
+        createTestCronTool({ selfRemoveOnlyJobId: "job-own" }).execute("bad", args),
+      ).rejects.toThrow();
+    }
+    await expect(createTestCronTool().execute("bad", { action: "scratch_get" })).rejects.toThrow();
+    expect(callGatewayMock).not.toHaveBeenCalled();
+  });
+
   it("tells models to keep cron expressions in local wall-clock time for tz", () => {
     const tool = createTestCronTool();
 
@@ -1738,16 +1834,18 @@ describe("cron tool", () => {
       resolveCreatorToolAuthority,
     });
 
-    await tool.execute("call-future-configured-mcp", {
-      action: "add",
-      job: {
-        ...buildReminderAgentTurnJob(),
-        payload: { kind: "agentTurn", message: "hello", toolsAllow: ["future__tool"] },
-      },
-    });
+    await expect(
+      tool.execute("call-future-configured-mcp", {
+        action: "add",
+        job: {
+          ...buildReminderAgentTurnJob(),
+          payload: { kind: "agentTurn", message: "hello", toolsAllow: ["future__tool"] },
+        },
+      }),
+    ).rejects.toThrow("unavailable to this creator");
 
     expect(resolveCreatorToolAuthority).toHaveBeenCalledOnce();
-    expect(readGatewayCall().params).toMatchObject({ payload: { toolsAllow: [] } });
+    expect(callGatewayMock).not.toHaveBeenCalled();
   });
 
   it("keeps future-tool prevention for complete runtimes without a capture marker", async () => {

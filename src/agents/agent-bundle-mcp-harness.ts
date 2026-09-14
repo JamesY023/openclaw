@@ -163,6 +163,7 @@ type MaterializeRequesterScopedMcpToolsForHarnessRunParams = {
   messageChannel?: string | null;
   reservedToolNames?: Iterable<string>;
   toolsAllow?: string[];
+  additionalToolsAllow?: string[];
   /** When set, applies the same final effective tool policy as the embedded runner. */
   conversationCapabilityProfile?: ResolvedConversationCapabilityProfile;
   /** Builds a capability profile when conversationCapabilityProfile is omitted. */
@@ -190,7 +191,10 @@ function applyHarnessToolPolicy(
   if (tools.length === 0) {
     return tools;
   }
-  const allowed = applyEmbeddedAttemptToolsAllow(tools, params.toolsAllow, {
+  const creatorAllowed = applyEmbeddedAttemptToolsAllow(tools, params.toolsAllow, {
+    toolMeta: (tool) => getPluginToolMeta(tool),
+  });
+  const allowed = applyEmbeddedAttemptToolsAllow(creatorAllowed, params.additionalToolsAllow, {
     toolMeta: (tool) => getPluginToolMeta(tool),
   });
   const profile =

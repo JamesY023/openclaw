@@ -633,6 +633,63 @@ function expectInvalidCronPatternError(respond: ReturnType<typeof vi.fn>): void 
 }
 
 describe("cron method validation", () => {
+  it.each(["cron.scratch.get", "cron.scratch.set"] as const)(
+    "Skynet scheduled own-job checkpoint works through %s",
+    async (method) => {
+      const context = createCronContext(
+        createCronJob({ id: "job-own", agentId: "ops", sessionKey: "agent:ops:main" }),
+      );
+      const client = callerClient("ops", undefined, "agent:ops:cron:job-own", "job-own");
+      const { respond } = await invokeCron(
+        method,
+        {
+          jobId: "job-own",
+          ...(method === "cron.scratch.set" ? { content: "checkpoint", expectedRevision: 0 } : {}),
+        },
+        { context, client },
+      );
+      expect(respond.mock.calls[0]?.[0]).toBe(true);
+      expect(
+        method === "cron.scratch.set" ? context.cron.writeScratch : context.cron.readScratch,
+      ).toHaveBeenCalledOnce();
+    },
+  );
+
+  it.each(["cron.scratch.get", "cron.scratch.set"] as const)(
+    "Skynet scheduled checkpoint cannot access a sibling through %s",
+    async (method) => {
+      const context = createCronContext(
+        createCronJob({ id: "job-other", agentId: "ops", sessionKey: "agent:ops:main" }),
+      );
+      const client = callerClient("ops", undefined, "agent:ops:main", "job-own");
+      const { respond } = await invokeCron(
+        method,
+        {
+          jobId: "job-other",
+          ...(method === "cron.scratch.set" ? { content: "checkpoint", expectedRevision: 0 } : {}),
+        },
+        { context, client },
+      );
+      expect(respond.mock.calls[0]?.[0]).toBe(false);
+      expect(context.cron.writeScratch).not.toHaveBeenCalled();
+      expect(context.cron.readScratch).not.toHaveBeenCalled();
+    },
+  );
+
+  it("Skynet scheduled checkpoint requires revision even through direct Gateway RPC", async () => {
+    const context = createCronContext(
+      createCronJob({ id: "job-own", agentId: "ops", sessionKey: "agent:ops:main" }),
+    );
+    const client = callerClient("ops", undefined, "agent:ops:main", "job-own");
+    const { respond } = await invokeCron(
+      "cron.scratch.set",
+      { jobId: "job-own", content: "checkpoint" },
+      { context, client },
+    );
+    expect(respond.mock.calls[0]?.[0]).toBe(false);
+    expect(context.cron.writeScratch).not.toHaveBeenCalled();
+  });
+
   it.each([
     ["cron.list", false],
     ["cron.get", false],

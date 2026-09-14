@@ -19,6 +19,7 @@ import { getGatewayToolCallerIdentity } from "./tools/gateway-caller-context.js"
 type CronCreatorAuthorityResolver = NonNullable<CronToolOptions["resolveCreatorToolAuthority"]>;
 type CronCreatorAuthorityMaterializer = (options?: {
   signal?: AbortSignal;
+  toolsAllow?: string[];
 }) => Promise<CronCreatorToolAuthorityMaterialization>;
 
 type CronCreatorAuthorityResolverScope = {
@@ -151,7 +152,10 @@ function bindCronCreatorAuthorityResolver(params: {
     const signal = operationSignal
       ? AbortSignal.any([authority.signal, operationSignal])
       : authority.signal;
-    const snapshot = await params.resolve({ signal });
+    const snapshot = await params.resolve({
+      signal,
+      ...(options?.toolsAllow ? { toolsAllow: [...options.toolsAllow] } : {}),
+    });
     authority.signal.throwIfAborted();
     operationSignal?.throwIfAborted();
     if (!authority.active) {

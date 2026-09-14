@@ -2,6 +2,7 @@
 import { MAX_DATE_TIMESTAMP_MS } from "@openclaw/normalization-core/number-coercion";
 import { Type, type TSchema } from "typebox";
 import { parseCronPacingBounds } from "../../cron/pacing.js";
+import { CRON_JOB_SCRATCH_MAX_BYTES } from "../../cron/scratch-contract.js";
 import type { CronPacing } from "../../cron/types.js";
 import { CRON_MANAGEMENT_METHODS } from "../../gateway/cron-creator-authority-grant.js";
 import { isRecord } from "../../utils.js";
@@ -47,6 +48,7 @@ const CRON_DELIVERY_MODES = ["none", "announce", "webhook"] as const;
 const CRON_RUN_MODES = ["due", "force"] as const;
 
 type CronToolSchemaOptions = {
+  scratch?: boolean;
   agentSessionKey?: string;
   management?: "only" | "also";
   /**
@@ -382,8 +384,20 @@ export function createCronToolSchema(options?: CronToolSchemaOptions): TSchema {
   const schema = Type.Object(
     {
       action: stringEnum(
-        managementOnly ? CRON_MANAGEMENT_METHODS.map((method) => method.slice(5)) : CRON_ACTIONS,
+        managementOnly
+          ? CRON_MANAGEMENT_METHODS.map((method) => method.slice(5))
+          : options?.scratch
+            ? [...CRON_ACTIONS, "scratch_get", "scratch_set"]
+            : CRON_ACTIONS,
       ),
+      ...(options?.scratch
+        ? {
+            content: Type.Optional(Type.String({ maxLength: CRON_JOB_SCRATCH_MAX_BYTES })),
+            expectedRevision: optionalNonNegativeIntegerSchema({
+              description: "Required current revision for scratch_set",
+            }),
+          }
+        : {}),
       ...gatewayCallOptionSchemaProperties(),
       includeDisabled: Type.Optional(Type.Boolean()),
       limit: optionalPositiveIntegerSchema({

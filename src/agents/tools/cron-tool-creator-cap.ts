@@ -206,7 +206,7 @@ function hasCronTriggerScript(value: unknown): boolean {
   return isRecord(value) && typeof value.script === "string" && value.script.trim().length > 0;
 }
 
-function classifyExplicitToolsAllow(
+export function classifyExplicitToolsAllow(
   payload: Record<string, unknown> | undefined,
 ): "absent" | "empty" | "finite" | "resolved" {
   if (!payload || !Object.hasOwn(payload, "toolsAllow")) {
@@ -227,7 +227,7 @@ function classifyExplicitToolsAllow(
     : "finite";
 }
 
-function explicitFiniteToolsNeedResolution(
+export function explicitFiniteToolsNeedResolution(
   payload: Record<string, unknown> | undefined,
   creatorToolAllowlist: readonly CronCreatorToolAllowlistEntry[] | undefined,
 ): boolean {

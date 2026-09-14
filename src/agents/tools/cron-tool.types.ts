@@ -65,6 +65,7 @@ export type CronToolOptions = {
   /** Attempt-cached authority resolved only when a mutation changes its tool cap. */
   resolveCreatorToolAuthority?: (options?: {
     signal?: AbortSignal;
+    toolsAllow?: string[];
   }) => Promise<CronCreatorToolAuthoritySnapshot>;
   /** Visible fail-closed reason when a queued local turn cannot retain fresh MCP authority. */
   creatorAuthorityUnavailableReason?: "queued-local-operator-configured-mcp";
