@@ -63,6 +63,8 @@ const loadTalkAgentExecution = createLazyRuntimeModule(async () => {
 
 function createTalkClientAgentRuntime(params: {
   config: OpenClawConfig;
+  authority: TalkAgentConsultAuthority;
+  sessionTarget: PreparedTalkSessionTarget;
   rawSourceRef?: string;
   assertCurrent?: () => void;
   bindOperationalRunInstance?: (instance: OperationalRunInstanceRef) => void;
@@ -110,6 +112,15 @@ function createTalkClientAgentRuntime(params: {
       // its final transcript would lose the answer when no spoken replacement arrives.
       return await execution.runEmbeddedAgent({
         ...runParams,
+        // Generic consult preparation restores delivery routing; Talk owns the
+        // authenticated caller identity used by both initial runs and steering.
+        ...prepareTalkClientControlAuthority({
+          config: params.config,
+          authority: params.authority,
+          sessionTarget: params.sessionTarget,
+          source: "attempt",
+          agentRuntime,
+        }),
         preparedRunAdmission,
         // Speech is mirrored separately. Keep generated input in current-turn custody,
         // but never display it or replay it as a later user request.
@@ -209,6 +220,8 @@ export function createTalkClientAgentConsultRunner(params: {
   const getAgentRuntime = () =>
     (agentRuntime ??= createTalkClientAgentRuntime({
       config: params.config,
+      authority,
+      sessionTarget: params.sessionTarget,
       ...(params.ownerConnId ? { rawSourceRef: params.ownerConnId } : {}),
     }));
   type PromptOwner = {
@@ -230,6 +243,8 @@ export function createTalkClientAgentConsultRunner(params: {
   const createOwnedAgentRuntime = (owner: PromptOwner, assertCurrent?: () => void) =>
     createTalkClientAgentRuntime({
       config: params.config,
+      authority,
+      sessionTarget: params.sessionTarget,
       ...(params.ownerConnId ? { rawSourceRef: params.ownerConnId } : {}),
       assertCurrent,
       bindOperationalRunInstance: (instance) => {
@@ -282,6 +297,8 @@ export function createTalkClientAgentConsultRunner(params: {
       : assertCurrent
         ? createTalkClientAgentRuntime({
             config: params.config,
+            authority,
+            sessionTarget: params.sessionTarget,
             ...(params.ownerConnId ? { rawSourceRef: params.ownerConnId } : {}),
             assertCurrent,
           })
