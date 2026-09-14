@@ -81,6 +81,26 @@ export function hasBeforeToolCallPolicy(): boolean {
   return state.hasBeforeToolCallHook || state.trustedToolPolicies.length > 0;
 }
 
+function isJessicaOwnerVoiceRun(
+  ctx: HookContext | undefined,
+  voiceRun: ReturnType<typeof resolveClientVoiceRunBinding>,
+): boolean {
+  const ownerProfileId = ctx?.config?.plugins?.entries?.["skynet-jessica"]?.config?.ownerProfileId;
+  return (
+    voiceRun?.agentId === "jessica" &&
+    ctx?.agentId === "jessica" &&
+    typeof ctx.sessionKey === "string" &&
+    ctx.sessionKey === voiceRun.sessionKey &&
+    /^agent:jessica:/.test(ctx.sessionKey) &&
+    !/^agent:jessica:(?:subagent|cron|worker|acp):/.test(ctx.sessionKey) &&
+    typeof ownerProfileId === "string" &&
+    ownerProfileId.length > 0 &&
+    ctx.requester?.channel === "webchat" &&
+    ctx.requester.senderIsOwner === true &&
+    ctx.requester.senderId === ownerProfileId
+  );
+}
+
 /** Consume voice approval only after tool-owned finalization produces execution params. */
 export function consumeFinalClientVoiceToolConfirmation(args: {
   toolName: string;
@@ -94,11 +114,13 @@ export function consumeFinalClientVoiceToolConfirmation(args: {
     runId: args.ctx?.runId,
     toolName: normalizeToolPolicyName(args.toolName || "tool"),
     toolParams: args.params,
+    ownerAuthorized: isJessicaOwnerVoiceRun(args.ctx, voiceRun),
     ...(voiceRun ? { isConfirmable: () => isClientVoiceSessionConfirmable(voiceRun) } : {}),
   });
 }
 
 export async function runBeforeToolCallHook(args: {
+  policyPhase?: "native-pre-tool-use";
   toolName: string;
   params: unknown;
   toolKind?: PluginHookToolKind;
@@ -187,6 +209,7 @@ export async function runBeforeToolCallHook(args: {
       runId: args.ctx?.runId,
       toolName,
       toolParams: normalizedParams,
+      ownerAuthorized: isJessicaOwnerVoiceRun(args.ctx, voiceRun),
       ...(voiceRun ? { isConfirmable: () => isClientVoiceSessionConfirmable(voiceRun) } : {}),
     });
     if (!voiceConfirmation.allowed) {
@@ -219,6 +242,7 @@ export async function runBeforeToolCallHook(args: {
       ...(args.toolInputKind && { toolInputKind: args.toolInputKind }),
     };
     const buildToolContext = (identity: typeof toolIdentity) => ({
+      ...(args.policyPhase === "native-pre-tool-use" ? { policyPhase: args.policyPhase } : {}),
       toolName,
       ...identity,
       ...(args.ctx?.agentId && { agentId: args.ctx.agentId }),

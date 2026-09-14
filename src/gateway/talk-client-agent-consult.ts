@@ -152,6 +152,10 @@ export function prepareTalkClientControlAuthority(params: {
   source?: "reply" | "attempt";
   agentRuntime: ReturnType<typeof createPluginRuntime>["agent"];
 }) {
+  const caller = params.authority.replyCaller;
+  const authorization = caller
+    ? resolveCommandAuthorization({ ctx: caller, cfg: params.config, commandAuthorized: false })
+    : undefined;
   const prepared = prepareRealtimeVoiceAgentExecutionContext({
     cfg: params.config,
     agentRuntime: params.agentRuntime,
@@ -162,7 +166,14 @@ export function prepareTalkClientControlAuthority(params: {
     ...params.authority,
   });
   if (params.source !== "reply") {
-    return prepared.toolAuthorityOverlay;
+    return caller && authorization
+      ? {
+          ...prepared.toolAuthorityOverlay,
+          messageProvider: caller.Provider,
+          senderId: authorization.senderId,
+          senderIsOwner: authorization.senderIsOwner,
+        }
+      : prepared.toolAuthorityOverlay;
   }
   if (!params.authority.replyCaller) {
     throw new Error("Talk chat caller authority is unavailable");
@@ -171,13 +182,9 @@ export function prepareTalkClientControlAuthority(params: {
   // has no trace/client/reviewer capabilities and must never inherit these.
   const ctx = params.authority.replyCaller;
   return resolveInboundReplyToolAuthorityOverlay({
-    ctx,
+    ctx: { ...ctx, SenderId: authorization?.senderId },
     sessionEntry: prepared.sessionEntry,
-    senderIsOwner: resolveCommandAuthorization({
-      ctx,
-      cfg: params.config,
-      commandAuthorized: false,
-    }).senderIsOwner,
+    senderIsOwner: authorization?.senderIsOwner === true,
     toolsAllow: params.authority.toolsAllow,
     disableTools: false,
   });

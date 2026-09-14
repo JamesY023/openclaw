@@ -206,6 +206,119 @@ describe("realtime voice agent consult runtime", () => {
     }
   });
 
+  it.each(["reply", "attempt"] as const)(
+    "preserves verified Talk owner exemption through %s control authority",
+    async (source) => {
+      const { prepareTalkClientControlAuthority } =
+        await import("../gateway/talk-client-agent-consult.js");
+      const { resolveTalkAgentConsultAuthority } =
+        await import("../gateway/talk-client-gateway-control.js");
+      const { runBeforeToolCallHook } = await import("../agents/agent-tools.before-tool-call.js");
+      const { consumeFinalClientVoiceToolConfirmation } =
+        await import("../agents/agent-tools.before-tool-call.policy.js");
+      const config = {
+        commands: { ownerAllowFrom: ["owner-profile"] },
+        plugins: { entries: { "skynet-jessica": { config: { ownerProfileId: "owner-profile" } } } },
+      };
+      const cases = [
+        { name: "owner", profile: "owner-profile", verified: true, allowed: true },
+        { name: "other", profile: "other-profile", verified: true, allowed: false },
+        { name: "fallback", profile: "owner-profile", verified: false, allowed: false },
+        {
+          name: "synthetic",
+          profile: "owner-profile",
+          verified: true,
+          synthetic: true,
+          allowed: false,
+        },
+        {
+          name: "delegated",
+          profile: "owner-profile",
+          verified: true,
+          delegated: true,
+          allowed: false,
+        },
+      ];
+      for (const candidate of cases) {
+        const { runtime, sessionStore } = createAgentRuntime();
+        const sessionKey = `agent:jessica:${candidate.delegated ? "subagent:" : ""}${source}-${candidate.name}`;
+        sessionStore[sessionKey] = {
+          sessionId: candidate.name,
+          delivery: { context: { channel: "telegram", to: "123", accountId: "default" } },
+        };
+        const client = {
+          authenticatedUserId: candidate.verified ? "owner@example.test" : undefined,
+          authenticatedUserProfile: {
+            profileId: candidate.profile,
+            displayName: "Fixture",
+            hasAvatar: false,
+            updatedAt: 1,
+          },
+          connect: {
+            minProtocol: 1,
+            maxProtocol: 1,
+            client: {
+              id: "openclaw-control-ui" as const,
+              mode: "webchat" as const,
+              version: "test",
+              platform: "test",
+            },
+            role: "operator" as const,
+            scopes: ["operator.admin"],
+          },
+          ...(candidate.synthetic ? { internal: { syntheticClient: true as const } } : {}),
+        };
+        const authority = resolveTalkAgentConsultAuthority(client.connect.scopes, client);
+        const overlay = prepareTalkClientControlAuthority({
+          config,
+          agentRuntime: runtime as never,
+          source,
+          authority,
+          sessionTarget: {
+            agentId: "jessica",
+            sessionKey,
+            canonicalKey: sessionKey,
+            storePath: testTempPath("sessions.json"),
+          },
+        });
+        if (candidate.allowed) {
+          expect(overlay.messageProvider).toBe("webchat");
+          expect(overlay.senderId).toBe("owner-profile");
+          expect(overlay.senderIsOwner).toBe(true);
+        }
+        const voiceSessionId = createOrResumeClientVoiceSession({
+          agentId: "jessica",
+          sessionKey,
+          origin: "client",
+          transcriptCapable: true,
+        });
+        const runId = `${source}-${candidate.name}`;
+        registerClientVoiceConsultRun({ agentId: "jessica", sessionKey, voiceSessionId, runId });
+        const ctx = {
+          agentId: "jessica",
+          sessionKey,
+          runId,
+          config,
+          requester: {
+            channel: overlay.messageProvider,
+            senderId: overlay.senderId,
+            senderIsOwner: overlay.senderIsOwner,
+          },
+        };
+        const action = {
+          toolName: "message",
+          params: { action: "send", message: "Synthetic", ownerAuthorized: true },
+          ctx,
+        };
+        const before = await runBeforeToolCallHook(action);
+        expect(before.blocked, candidate.name).toBe(!candidate.allowed);
+        expect(consumeFinalClientVoiceToolConfirmation(action).allowed, candidate.name).toBe(
+          candidate.allowed,
+        );
+      }
+    },
+  );
+
   it("exposes the shared consult tool based on policy", () => {
     expect(REALTIME_VOICE_AGENT_CONSULT_SENDER_AUTH_VERSION).toBe(1);
     expect(resolveRealtimeVoiceAgentConsultTools("safe-read-only")).toStrictEqual([
