@@ -460,8 +460,7 @@ export function projectChatDisplayMessagesWithState(
       { ...result, role: "toolResult" },
       options?.maxChars ?? DEFAULT_CHAT_HISTORY_TEXT_MAX_CHARS,
     ).message;
-    return {
-      ...asOptionalRecord(message),
+    return Object.assign({}, asOptionalRecord(message), {
       runId: activity.details.runId,
       // The entry dedupe key identifies a nested call, not its owning run.
       // Publish validated ownership where history and live clients read it.
@@ -470,7 +469,7 @@ export function projectChatDisplayMessagesWithState(
         runId: activity.details.runId,
       },
       content: [call, sanitized],
-    };
+    });
   });
   const source =
     options?.stripEnvelope === false

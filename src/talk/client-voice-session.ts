@@ -1,33 +1,20 @@
 /** Durable per-agent voice-call records for Talk continuity and mutation evidence. */
-import { createHash, randomUUID } from "node:crypto";
-import { isRecord } from "@openclaw/normalization-core/record-coerce";
-import { isIntermediateAssistantTranscriptMessage } from "../agents/embedded-agent-runner/message-visibility.js";
+import { randomUUID } from "node:crypto";
 import {
   appendTranscriptMessage,
   loadSessionEntryReadOnly,
   patchSessionEntryCore,
   publishTranscriptUpdate,
 } from "../config/sessions/session-accessor.js";
-import { readSessionTranscriptHistoryEventById } from "../config/sessions/session-accessor.sqlite-history-events.js";
 import { buildSessionCreationStamp } from "../config/sessions/session-entry-provenance.js";
 import { mergeSessionEntry } from "../config/sessions/types.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
-import {
-  hasAssistantDisplayableNonTextContent,
-  hasTranscriptMediaFacts,
-  extractAssistantTextForSilentCheck,
-} from "../gateway/chat-display-projection.helpers.js";
-import { sanitizeChatHistoryMessage } from "../gateway/chat-display-projection.sanitize.js";
 import {
   onTrustedInternalDiagnosticEvent,
   onTrustedToolExecutionEvent,
   type TrustedToolExecutionEvent,
 } from "../infra/diagnostic-events.js";
-import {
-  ownedVoiceTranscriptEventId,
-  readSessionTranscriptRunId,
-  resolveTerminalAssistantTranscriptRunId,
-} from "../sessions/transcript-events.js";
+import { ownedVoiceTranscriptEventId } from "../sessions/transcript-events.js";
 import { runOpenClawAgentWriteTransaction } from "../state/openclaw-agent-db.js";
 import {
   deactivateClientVoiceConfirmationSession,
@@ -53,6 +40,12 @@ import {
   VOICE_SESSION_STALE_AFTER_MS as STALE_AFTER_MS,
   writeVoiceSessionRecordInTransaction as writeRecordInTransaction,
 } from "./client-voice-session-store.js";
+import {
+  transcriptFailureKey,
+  buildPersistedVoiceMessage,
+  assertOwnedVoiceTranscriptReplacement,
+  type OwnedRelayVoiceTranscript,
+} from "./client-voice-transcript.js";
 import {
   createVoiceTranscriptOperationRegistry,
   normalizeVoiceTranscriptText,
@@ -431,44 +424,6 @@ export function resolveOpenClientVoiceSessionId(params: {
   return match;
 }
 
-function buildPersistedVoiceMessage(params: {
-  role: "user" | "assistant";
-  text: string;
-  timestamp: number;
-  provider: string;
-}): Record<string, unknown> {
-  const provenance = { kind: "realtime_voice", sourceChannel: "talk" };
-  if (params.role === "user") {
-    return {
-      role: "user",
-      content: [{ type: "text", text: params.text }],
-      timestamp: params.timestamp,
-      provenance,
-    };
-  }
-  return {
-    role: "assistant",
-    content: [{ type: "text", text: params.text }],
-    api: "realtime",
-    provider: params.provider,
-    model: "realtime-voice",
-    stopReason: "stop",
-    timestamp: params.timestamp,
-    provenance,
-  };
-}
-
-function transcriptFailureKey(entryId: string): string {
-  return createHash("sha256").update(entryId, "utf8").digest("hex");
-}
-
-type OwnedRelayVoiceTranscript = {
-  consultRunId: string;
-  terminalMessageId: string;
-  playbackId: string;
-  assertCurrent: () => void;
-};
-
 function appendVoiceTranscript(
   params: {
     agentId: string;
@@ -519,53 +474,6 @@ function appendVoiceTranscript(
         throw new Error(`agent session not found (${normalized.sessionKey})`);
       }
       const transcriptScope = { ...sessionTarget, sessionId: sessionEntry.sessionId };
-      const assertOwnedReplacement = () => {
-        if (!owned) {
-          return;
-        }
-        owned.assertCurrent();
-        const current = readRecord(normalized.agentId, normalized.voiceSessionId);
-        const currentSession = loadSessionEntryReadOnly(sessionTarget);
-        if (
-          !current ||
-          current.status !== "open" ||
-          current.origin !== "relay" ||
-          currentSession?.sessionId !== sessionEntry.sessionId ||
-          !current.consultRunIds.includes(owned.consultRunId)
-        ) {
-          throw new Error("owned voice replacement lost its consult session");
-        }
-        assertOwnership(current, normalized);
-        const original = readSessionTranscriptHistoryEventById(
-          transcriptScope,
-          owned.terminalMessageId,
-        )?.event.message;
-        if (
-          !isRecord(original) ||
-          original.stopReason !== "stop" ||
-          isIntermediateAssistantTranscriptMessage(original) ||
-          resolveTerminalAssistantTranscriptRunId(
-            original,
-            readSessionTranscriptRunId(original),
-          ) !== owned.consultRunId
-        ) {
-          throw new Error("owned voice replacement requires its exact terminal consult message");
-        }
-        const visible = sanitizeChatHistoryMessage(original, Number.MAX_SAFE_INTEGER).message;
-        if (
-          hasAssistantDisplayableNonTextContent(original) ||
-          hasAssistantDisplayableNonTextContent(visible) ||
-          hasTranscriptMediaFacts(original)
-        ) {
-          throw new Error("owned voice replacement cannot represent the original media");
-        }
-        if (
-          (extractAssistantTextForSilentCheck(original)?.trim().length ?? 0) >
-          VOICE_TRANSCRIPT_QUEUE_POLICY.maxEntryChars
-        ) {
-          throw new Error("owned voice replacement would truncate the original answer");
-        }
-      };
       const observedAt = Date.now();
       const timestamp = normalized.timestamp ?? observedAt;
       // Owned replacements are optional: their original final remains durable on failure.
@@ -588,24 +496,15 @@ function appendVoiceTranscript(
           { agentId: normalized.agentId },
         );
       }
-      const message = {
-        ...buildPersistedVoiceMessage({
+      const message = buildPersistedVoiceMessage(
+        {
           role: normalized.role,
           text: normalized.text,
           timestamp,
           provider: record.provider ?? "realtime",
-        }),
-        ...(owned
-          ? {
-              __openclaw: {
-                replacesRunId: owned.consultRunId,
-                replacesMessageId: owned.terminalMessageId,
-                voiceSessionId: normalized.voiceSessionId,
-                playbackId: owned.playbackId,
-              },
-            }
-          : {}),
-      };
+        },
+        owned ? { ...owned, voiceSessionId: normalized.voiceSessionId } : undefined,
+      );
       const appended = await appendTranscriptMessage(transcriptScope, {
         ...(normalized.config ? { config: normalized.config } : {}),
         eventId: owned
@@ -615,7 +514,7 @@ function appendVoiceTranscript(
         ...(owned
           ? {
               prepareMessageAfterIdempotencyCheck: (candidate: typeof message) => {
-                assertOwnedReplacement();
+                assertOwnedVoiceTranscriptReplacement(normalized, owned, sessionEntry.sessionId);
                 return candidate;
               },
             }
