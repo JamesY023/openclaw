@@ -411,7 +411,9 @@ describe("talk realtime gateway relay", () => {
     stopTalkRealtimeRelaySession({ relaySessionId: session.relaySessionId, connId });
     expect(logGateway.info.mock.calls).toEqual([
       [`[talk-relay] ready relaySessionId=${session.relaySessionId} connId=${connId}`],
-      [`[talk-relay] close relaySessionId=${session.relaySessionId} connId=${connId}`],
+      [
+        `[talk-relay] close relaySessionId=${session.relaySessionId} connId=${connId} reason=completed`,
+      ],
     ]);
     expect(logGateway.warn.mock.calls).toEqual(
       outcome.status === "failed" || outcome.status === "incomplete"
@@ -663,7 +665,7 @@ describe("talk realtime gateway relay", () => {
       await Promise.resolve();
 
       expect(logGateway.info).toHaveBeenCalledWith(
-        `[talk-relay] close relaySessionId=${firstOwned.relaySessionId} connId=unknown`,
+        `[talk-relay] close relaySessionId=${firstOwned.relaySessionId} connId=unknown reason=completed`,
       );
       expect(bridgeCloses[0]).toHaveBeenCalledOnce();
       expect(bridgeCloses[1]).toHaveBeenCalledOnce();
@@ -5741,7 +5743,7 @@ it("logs only UUID relay metadata without changing event delivery", () => {
   }
   expect(logGateway.info.mock.calls).toEqual([
     ["[talk-relay] ready relaySessionId=unknown connId=unknown"],
-    ["[talk-relay] close relaySessionId=unknown connId=unknown"],
+    ["[talk-relay] close relaySessionId=unknown connId=unknown reason=error"],
   ]);
   expect(logGateway.warn.mock.calls).toEqual([
     ["[talk-relay] error relaySessionId=unknown connId=unknown"],

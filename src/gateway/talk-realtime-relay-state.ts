@@ -317,8 +317,11 @@ export function broadcastToOwner(
         ? value
         : "unknown",
     );
+    // A close carries why it ended; without it a dropped relay and a finished
+    // turn are the same line, and an unexplained teardown cannot be diagnosed.
+    const detail = event.type === "close" ? ` reason=${event.reason}` : "";
     context.logGateway?.[event.type === "error" ? "warn" : "info"]?.(
-      `[talk-relay] ${event.type} relaySessionId=${relaySessionId} connId=${ownerConnId}`,
+      `[talk-relay] ${event.type} relaySessionId=${relaySessionId} connId=${ownerConnId}${detail}`,
     );
   }
   // Classify the materialized Talk event so final results cannot be mistaken
