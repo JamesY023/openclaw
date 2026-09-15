@@ -379,4 +379,51 @@ describe("chat history recovery cursor eligibility", () => {
     });
     expect((await readTail(scope)).deltaCursor).toEqual(expect.any(String));
   });
+
+  // A spoken final replaces the consult final it names. An append-only delta can
+  // only add rows, so emitting the replacement leaves both visible and Talk paints
+  // every answer twice. Hand reconciliation to the full reader, which collapses them.
+  it("resets a delta carrying an owned-voice replacement of an earlier final", async () => {
+    const { scope, cursor } = await createTranscript();
+    await appendTranscriptMessage(scope, {
+      eventId: "spoken-user",
+      message: { role: "user", content: "can you hear me" },
+    });
+    await appendTranscriptMessage(scope, {
+      eventId: "final-owned",
+      message: {
+        role: "assistant",
+        stopReason: "stop",
+        api: "openai-chatgpt-responses",
+        model: "gpt-6",
+        content: [{ type: "text", text: "Yes, James, that came through." }],
+        __openclaw: { runId: "run-owned" },
+      },
+    });
+    await appendTranscriptMessage(scope, {
+      eventId: "voice-owned:final-owned",
+      message: {
+        role: "assistant",
+        stopReason: "stop",
+        api: "realtime",
+        model: "realtime-voice",
+        content: [{ type: "text", text: "Yes, James, that came through." }],
+        provenance: { kind: "realtime_voice", sourceChannel: "talk" },
+        __openclaw: {
+          replacesRunId: "run-owned",
+          replacesMessageId: "final-owned",
+          voiceSessionId: "voice-owned",
+          playbackId: "playback-owned",
+        },
+      },
+    });
+
+    expect(readDelta(scope, cursor)).toEqual({ kind: "reset" });
+    expect((await readTail(scope)).messages).toEqual([
+      expect.objectContaining({ __openclaw: expect.objectContaining({ id: "spoken-user" }) }),
+      expect.objectContaining({
+        __openclaw: expect.objectContaining({ id: "voice-owned:final-owned" }),
+      }),
+    ]);
+  });
 });

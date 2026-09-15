@@ -127,3 +127,46 @@ describe("trusted transcript display metadata", () => {
     },
   );
 });
+
+describe("owned voice replacement live projection", () => {
+  const spoken = {
+    role: "assistant",
+    stopReason: "stop",
+    api: "realtime",
+    model: "realtime-voice",
+    content: [{ type: "text", text: "Yes, James, that came through." }],
+    provenance: { kind: "realtime_voice", sourceChannel: "talk" },
+    __openclaw: {
+      replacesRunId: "run-owned",
+      replacesMessageId: "final-owned",
+      voiceSessionId: "voice-owned",
+      playbackId: "playback-owned",
+    },
+  };
+
+  // One live row cannot express "replace the final you already showed". Pushing it
+  // appends a second copy of the same answer; suppressing it leaves the caller's
+  // existing no-payload branch to invalidate the transcript instead.
+  it("suppresses the live payload for a spoken final that replaces an earlier one", () => {
+    expect(
+      projectSessionMessagePayload({
+        sessionKey: "agent:main:talk",
+        message: spoken,
+        messageId: "voice-owned:final-owned",
+        messageSeq: 9,
+      }).payload,
+    ).toBeUndefined();
+  });
+
+  it("still projects a spoken final that replaces nothing", () => {
+    const { __openclaw: _replacement, ...unlinked } = spoken;
+    expect(
+      projectSessionMessagePayload({
+        sessionKey: "agent:main:talk",
+        message: unlinked,
+        messageId: "voice-standalone",
+        messageSeq: 9,
+      }).payload,
+    ).toMatchObject({ messageId: "voice-standalone" });
+  });
+});

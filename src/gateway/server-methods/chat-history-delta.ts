@@ -6,6 +6,7 @@ import {
   type SessionTranscriptDisplayDeltaResult,
 } from "../../config/sessions/session-accessor.sqlite-history-events.js";
 import { jsonUtf8BytesOrInfinity } from "../../infra/json-utf8-bytes.js";
+import { readOwnedVoiceTranscriptReplacement } from "../../sessions/transcript-events.js";
 import {
   createCurrentUserProfileMessageProjector,
   projectChatDisplayMessagesWithState,
@@ -81,6 +82,12 @@ export function readChatHistoryDelta(params: {
     );
     if (!entryMessage) {
       continue;
+    }
+    if (readOwnedVoiceTranscriptReplacement(entryMessage)) {
+      // A spoken final replaces the consult final it names, and the full reader
+      // collapses the pair. An append-only delta can only add, so emitting it
+      // leaves both visible; let the full history owner reconcile them.
+      return { kind: "reset" };
     }
     const messageId = asOptionalRecord(row.event)?.id;
     const historyProjection = projectChatDisplayMessagesWithState([entryMessage], {

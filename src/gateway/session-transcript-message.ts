@@ -1,5 +1,6 @@
 import { asOptionalRecord } from "@openclaw/normalization-core/record-coerce";
 import type { TranscriptDisplayPosition } from "../chat/transcript-display-position.js";
+import { readOwnedVoiceTranscriptReplacement } from "../sessions/transcript-events.js";
 import { isVisibleTranscriptRecord } from "../sessions/transcript-visible-record.js";
 import {
   createCurrentUserProfileMessageProjector,
@@ -73,6 +74,17 @@ export function projectSessionMessagePayload(params: {
     ...(idempotencyKey ? { idempotencyKey } : {}),
     ...(params.messageSeq !== undefined ? { seq: params.messageSeq } : {}),
   });
+  if (readOwnedVoiceTranscriptReplacement(rawMessage)) {
+    // This final replaces one already delivered. A single live row can only be
+    // appended, so emitting it shows the same answer twice; callers fall back to
+    // invalidating the transcript, which re-reads the collapsed pair.
+    return {
+      projectionState: params.projectionState ?? {
+        assistantErrorPending: false,
+        turnBoundaryPending: false,
+      },
+    };
+  }
   const projected = params.projectionState
     ? projectChatDisplayMessagesWithState([rawMessage], {
         assistantErrorPending: params.projectionState.assistantErrorPending,
