@@ -319,7 +319,14 @@ export function broadcastToOwner(
     );
     // A close carries why it ended; without it a dropped relay and a finished
     // turn are the same line, and an unexplained teardown cannot be diagnosed.
-    const detail = event.type === "close" ? ` reason=${event.reason}` : "";
+    // The provider supplies this field, so only the two reasons this relay
+    // defines may reach the journal; anything else is payload, not a reason.
+    const detail =
+      event.type === "close" && (event.reason === "completed" || event.reason === "error")
+        ? ` reason=${event.reason}`
+        : event.type === "close"
+          ? " reason=unknown"
+          : "";
     context.logGateway?.[event.type === "error" ? "warn" : "info"]?.(
       `[talk-relay] ${event.type} relaySessionId=${relaySessionId} connId=${ownerConnId}${detail}`,
     );
