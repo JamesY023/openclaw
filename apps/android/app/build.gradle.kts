@@ -1,6 +1,7 @@
 import com.android.build.api.variant.impl.VariantOutputImpl
 import org.gradle.api.tasks.Exec
 import org.gradle.api.tasks.PathSensitivity
+import java.net.URI
 import java.time.Instant
 import java.time.ZoneOffset
 import java.time.format.DateTimeFormatter
@@ -35,6 +36,28 @@ fun optionalOpenClawBuildProperty(name: String): String? =
     .orNull
     ?.trim()
     ?.takeIf { it.isNotEmpty() }
+
+val defaultSessionKey = optionalOpenClawBuildProperty("openclawDefaultSessionKey").orEmpty()
+val defaultSessionGatewayUrl = optionalOpenClawBuildProperty("openclawDefaultSessionGatewayUrl").orEmpty()
+require(defaultSessionKey.isEmpty() == defaultSessionGatewayUrl.isEmpty()) {
+  "openclawDefaultSessionKey and openclawDefaultSessionGatewayUrl must be supplied together."
+}
+if (defaultSessionKey.isNotEmpty()) {
+  require(
+    Regex("^agent:[a-z0-9][a-z0-9_-]*:[A-Za-z0-9:_-]{1,480}$").matches(defaultSessionKey) &&
+      defaultSessionKey.substringAfter(':').substringAfter(':').lowercase() !in setOf("main", "global"),
+  ) {
+    "openclawDefaultSessionKey must be a fully qualified non-main session key."
+  }
+  val gateway = runCatching { URI(defaultSessionGatewayUrl) }.getOrNull()
+  require(
+    gateway != null && gateway.scheme in setOf("ws", "wss") && !gateway.host.isNullOrBlank() &&
+      gateway.rawUserInfo == null && gateway.rawQuery == null && gateway.rawFragment == null &&
+      (gateway.port == -1 || gateway.port in 1..65535),
+  ) {
+    "openclawDefaultSessionGatewayUrl must be a ws/wss endpoint without credentials, query or fragment."
+  }
+}
 
 val fullGitCommitPattern = Regex("^[a-f0-9]{40}$")
 val buildTimestampFormatter =
@@ -149,6 +172,8 @@ android {
     versionName = openClawAndroidVersionName
     buildConfigField("String", "GIT_COMMIT", "\"$openClawBuildCommit\"")
     buildConfigField("String", "BUILD_TIMESTAMP", "\"$openClawBuildTimestamp\"")
+    buildConfigField("String", "DEFAULT_SESSION_KEY", "\"$defaultSessionKey\"")
+    buildConfigField("String", "DEFAULT_SESSION_GATEWAY_URL", "\"$defaultSessionGatewayUrl\"")
     ndk {
       // Support all major ABIs — native libs are tiny (~47 KB per ABI)
       abiFilters += listOf("armeabi-v7a", "arm64-v8a", "x86", "x86_64")

@@ -43,6 +43,121 @@ import java.util.concurrent.atomic.AtomicReference
 @Config(sdk = [34])
 class NodeRuntimeAgentSelectionTest {
   @Test
+  fun configuredDefaultIsUsedByTheTextRequest() = runBlocking {
+    val runtime = createConnectedRuntime()
+    val sent = CompletableDeferred<JsonObject>()
+    val agent = resolveAgentIdFromMainSessionKey(BuildConfig.DEFAULT_SESSION_KEY) ?: "jessica"
+    try {
+      ReflectionHelpers.setField(runtime, "connectedEndpoint", configuredGatewayForTest())
+      installChatGateway(runtime, { method, params ->
+        val request = Json.parseToJsonElement(params ?: "{}").jsonObject
+        val key = request["sessionKey"]?.jsonPrimitive?.content ?: request["key"]?.jsonPrimitive?.content ?: runtime.mainSessionKey.value
+        when (method) {
+          "sessions.list" -> """{"sessions":[]}"""
+          "sessions.branches.list" -> """{"branches":[]}"""
+          "sessions.describe" -> """{"session":{"key":"$key","sessionId":"shared-test","agentId":"$agent","archived":false}}"""
+          "chat.history" -> """{"sessionKey":"$key","sessionId":"shared-test","messages":[],"sessionInfo":{"key":"$key","sessionId":"shared-test","agentId":"$agent","hasActiveRun":false}}"""
+          "chat.send" -> {
+            sent.complete(request)
+            """{"runId":"${request.getValue("idempotencyKey").jsonPrimitive.content}","status":"accepted"}"""
+          }
+          else -> "{}"
+        }
+      })
+      runtime.selectChatAgent(agent)
+      val chat = ReflectionHelpers.getField<ChatController>(runtime, "chat")
+      withTimeout(5_000) {
+        while (!chat.healthOk.value) {
+          org.robolectric.Shadows.shadowOf(android.os.Looper.getMainLooper()).idle()
+          kotlinx.coroutines.delay(10)
+        }
+      }
+      assertTrue(chat.sendMessageAwaitAcceptance("Read the shared fixture", "low", emptyList()))
+      val request = withTimeout(5_000) { sent.await() }
+      assertEquals(BuildConfig.DEFAULT_SESSION_KEY.ifEmpty { runtime.mainSessionKey.value }, request.getValue("sessionKey").jsonPrimitive.content)
+      assertEquals(runtime.mainSessionKey.value, request.getValue("sessionKey").jsonPrimitive.content)
+      assertEquals(agent, request.getValue("agentId").jsonPrimitive.content)
+      assertTrue(request.getValue("idempotencyKey").jsonPrimitive.content.isNotBlank())
+    } finally {
+      closeNodeRuntimeTestFixture(runtime)
+    }
+  }
+
+  @Test
+  fun oldGatewayLookupCannotRestoreTheConfiguredDefaultInAnotherGateway() = runBlocking {
+    val runtime = createConnectedRuntime()
+    val lookupStarted = CompletableDeferred<Job>()
+    val releaseLookup = CompletableDeferred<Unit>()
+    try {
+      ReflectionHelpers.setField(runtime, "connectedEndpoint", GatewayEndpoint.manual("queen-omarchy.tail3527f5.ts.net", 443, true))
+      stubAgentSessionLookup(runtime) {
+        lookupStarted.complete(currentCoroutineContext().job)
+        releaseLookup.await()
+        """{"sessions":[{"key":"agent:jessica:node-d4d8d337f8c4","agentId":"jessica","updatedAt":20}]}"""
+      }
+      runtime.selectChatAgent("jessica")
+      val lookup = withTimeout(2_000) { lookupStarted.await() }
+      val chat = ReflectionHelpers.getField<ChatController>(runtime, "chat")
+      chat.onGatewayScopeChanging()
+      ReflectionHelpers.setField(runtime, "connectedEndpoint", GatewayEndpoint.manual("other.example", 443, true))
+      ReflectionHelpers.callInstanceMethod<String>(runtime, "prepareMainSessionKey", ReflectionHelpers.ClassParameter.from(String::class.java, "jessica"))
+      val otherKey = runtime.mainSessionKey.value
+      releaseLookup.complete(Unit)
+      withTimeout(2_000) { lookup.join() }
+      assertTrue(otherKey.startsWith("agent:jessica:node-"))
+      assertFalse(otherKey == "agent:jessica:node-d4d8d337f8c4")
+      assertEquals(otherKey, runtime.chatSessionKey.value)
+    } finally {
+      releaseLookup.complete(Unit)
+      closeNodeRuntimeTestFixture(runtime)
+    }
+  }
+
+  @Test
+  fun configuredDefaultUnifiesTextAndTalkForBothDevices() {
+    repeat(2) {
+      val runtime = createConnectedRuntime()
+      try {
+        val agent = resolveAgentIdFromMainSessionKey(BuildConfig.DEFAULT_SESSION_KEY) ?: "jessica"
+        val fallback = runtime.mainSessionKey.value.replace("agent:main:", "agent:$agent:")
+        val endpoint = configuredGatewayForTest()
+        ReflectionHelpers.setField(runtime, "connectedEndpoint", endpoint)
+        runtime.selectChatAgent(agent)
+        val expected = BuildConfig.DEFAULT_SESSION_KEY.ifEmpty { fallback }
+        assertEquals(expected, runtime.mainSessionKey.value)
+        assertEquals(runtime.mainSessionKey.value, runtime.chatSessionKey.value)
+        val talk = ReflectionHelpers.callInstanceMethod<ai.openclaw.app.voice.TalkModeManager>(runtime, "getTalkMode")
+        assertEquals(runtime.mainSessionKey.value, ReflectionHelpers.getField<String>(talk, "mainSessionKey"))
+        val otherAgent = if (agent == "scout") "writer" else "scout"
+        runtime.selectChatAgent(otherAgent)
+        assertEquals(fallback.replace("agent:$agent:", "agent:$otherAgent:"), runtime.mainSessionKey.value)
+        ReflectionHelpers.setField(runtime, "connectedEndpoint", endpoint.copy(host = "other.example"))
+        runtime.selectChatAgent(agent)
+        assertEquals(fallback, runtime.mainSessionKey.value)
+        assertEquals(fallback, runtime.chatSessionKey.value)
+        assertEquals(fallback, ReflectionHelpers.getField<String>(talk, "mainSessionKey"))
+        ReflectionHelpers.setField(runtime, "connectedEndpoint", endpoint)
+        ReflectionHelpers.callInstanceMethod<String>(runtime, "prepareMainSessionKey", ReflectionHelpers.ClassParameter.from(String::class.java, agent))
+        assertEquals(expected, runtime.mainSessionKey.value)
+        assertEquals(expected, runtime.chatSessionKey.value)
+        assertEquals(expected, ReflectionHelpers.getField<String>(talk, "mainSessionKey"))
+      } finally {
+        closeNodeRuntimeTestFixture(runtime)
+      }
+    }
+  }
+
+  private fun configuredGatewayForTest(): GatewayEndpoint {
+    val uri = java.net.URI(BuildConfig.DEFAULT_SESSION_GATEWAY_URL.ifEmpty { "wss://queen-omarchy.tail3527f5.ts.net" })
+    return GatewayEndpoint.manual(
+      uri.host,
+      uri.port.takeIf { it != -1 } ?: if (uri.scheme == "wss") 443 else 80,
+      uri.scheme == "wss",
+      uri.rawPath.orEmpty(),
+    )
+  }
+
+  @Test
   fun publicationsRereadSelectedAgentModelsWithoutDiscovery() =
     runBlocking {
       for (event in listOf("config.changed", "chat.metadata.changed")) {

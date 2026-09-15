@@ -77,7 +77,7 @@ class TalkSpeakClientTest {
     }
 
   @Test
-  fun fallsBackOnlyForUnavailableReasons() =
+  fun providerAbsenceReturnsFailure() =
     runTest {
       val client =
         TalkSpeakClient(
@@ -102,7 +102,7 @@ class TalkSpeakClientTest {
         )
 
       val result = client.synthesize(text = "Hello", directive = null)
-      assertTrue(result is TalkSpeakResult.FallbackToLocal)
+      assertTrue(result is TalkSpeakResult.Failure)
     }
 
   @Test
@@ -135,7 +135,7 @@ class TalkSpeakClientTest {
     }
 
   @Test
-  fun fallsBackWhenGatewayOmitsReason() =
+  fun missingReasonStillReturnsFailure() =
     runTest {
       val client =
         TalkSpeakClient(
@@ -154,7 +154,7 @@ class TalkSpeakClientTest {
         )
 
       val result = client.synthesize(text = "Hello", directive = null)
-      assertTrue(result is TalkSpeakResult.FallbackToLocal)
+      assertTrue(result is TalkSpeakResult.Failure)
     }
 
   @Test

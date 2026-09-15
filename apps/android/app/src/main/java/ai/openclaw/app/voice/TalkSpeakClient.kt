@@ -23,11 +23,6 @@ internal sealed interface TalkSpeakResult {
     val audio: TalkSpeakAudio,
   ) : TalkSpeakResult
 
-  /** Provider or config absence allows Android local TTS to handle the reply. */
-  data class FallbackToLocal(
-    val message: String,
-  ) : TalkSpeakResult
-
   /** Request, payload, or audio errors that should stay visible to the caller. */
   data class Failure(
     val message: String,
@@ -42,7 +37,7 @@ internal interface TalkSpeechSynthesizing {
   ): TalkSpeakResult
 }
 
-/** Gateway RPC client for talk.speak with local-TTS fallback classification. */
+/** Gateway RPC client for talk.speak; synthesis failures remain visible. */
 internal class TalkSpeakClient(
   private val session: GatewaySession? = null,
   private val json: Json = Json { ignoreUnknownKeys = true },
@@ -67,11 +62,7 @@ internal class TalkSpeakClient(
     if (!response.ok) {
       val error = response.error
       val message = error?.message ?: "talk.speak request failed"
-      return if (isFallbackEligible(error)) {
-        TalkSpeakResult.FallbackToLocal(message)
-      } else {
-        TalkSpeakResult.Failure(message)
-      }
+      return TalkSpeakResult.Failure(message)
     }
     val payload =
       try {
@@ -98,16 +89,6 @@ internal class TalkSpeakClient(
         fileExtension = payload.fileExtension,
       ),
     )
-  }
-
-  private fun isFallbackEligible(error: GatewaySession.ErrorShape?): Boolean {
-    val reason = error?.details?.reason
-    if (reason == null) return true
-    // Only provider/config absence should fall back to Android TTS; payload and
-    // transport errors should stay visible to the caller.
-    return reason == "talk_unconfigured" ||
-      reason == "talk_provider_unsupported" ||
-      reason == "method_unavailable"
   }
 
   private suspend fun performRequest(

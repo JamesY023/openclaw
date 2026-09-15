@@ -885,7 +885,7 @@ class ChatController internal constructor(
     updateLocalizedErrorText(message?.let(::verbatimText), historyGeneration)
   }
 
-  private fun updateLocalizedErrorText(
+  internal fun updateLocalizedErrorText(
     message: NativeText?,
     historyGeneration: Long? = null,
   ) {

@@ -71,6 +71,7 @@ internal class MicCaptureManager(
   private val sendToGateway: suspend (message: String, onRunIdKnown: (String) -> Unit) -> ChatSendAck,
   private val refreshAfterTerminalSuccess: suspend () -> Unit = {},
   private val speakAssistantReply: suspend (String) -> Unit = {},
+  private val onSpeechError: (NativeText) -> Unit = {},
 ) {
   companion object {
     private const val tag = "MicCapture"
@@ -720,7 +721,12 @@ internal class MicCaptureManager(
     scope.launch {
       try {
         speakAssistantReply(spoken)
+      } catch (err: CancellationException) {
+        throw err
       } catch (err: Throwable) {
+        val failure = nativeText("Speak failed: \$message", err.message ?: err::class.simpleName.orEmpty())
+        _statusText.value = failure
+        onSpeechError(failure)
         Log.w(tag, "assistant speech failed: ${err.message ?: err::class.simpleName}")
       }
     }

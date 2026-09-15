@@ -1,10 +1,15 @@
 package ai.openclaw.app.voice
 
 import ai.openclaw.app.NodeRuntime
+import ai.openclaw.app.BuildConfig
+import ai.openclaw.app.buildNodeMainSessionKey
 import ai.openclaw.app.NodeRuntimeMode
 import ai.openclaw.app.SecurePrefs
 import ai.openclaw.app.VoiceCaptureMode
 import ai.openclaw.app.closeNodeRuntimeTestFixture
+import ai.openclaw.app.chat.parseChatMessageContents
+import ai.openclaw.app.ui.chat.chatMessagePlainText
+import ai.openclaw.app.ui.chat.userFacingChatError
 import ai.openclaw.app.gateway.DeviceAuthStore
 import ai.openclaw.app.gateway.GatewayClientInfo
 import ai.openclaw.app.gateway.GatewayConnectOptions
@@ -31,7 +36,6 @@ import android.os.ParcelFileDescriptor
 import android.speech.RecognitionListener
 import android.speech.RecognitionService
 import android.speech.SpeechRecognizer
-import android.speech.tts.TextToSpeech
 import android.util.Base64
 import androidx.core.os.LocaleListCompat
 import kotlinx.coroutines.CompletableDeferred
@@ -106,6 +110,27 @@ import kotlin.coroutines.CoroutineContext
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34])
 class TalkModeManagerTest {
+  @Test
+  fun configuredDefaultIsUsedByTheRealtimeRequest() = runBlocking {
+    val uri = java.net.URI(BuildConfig.DEFAULT_SESSION_GATEWAY_URL.ifEmpty { "wss://queen-omarchy.tail3527f5.ts.net" })
+    val key = buildNodeMainSessionKey(
+      "tablet1234567890",
+      ai.openclaw.app.resolveAgentIdFromMainSessionKey(BuildConfig.DEFAULT_SESSION_KEY) ?: "jessica",
+      BuildConfig.DEFAULT_SESSION_KEY,
+      BuildConfig.DEFAULT_SESSION_GATEWAY_URL,
+      GatewayEndpoint.manual(uri.host, uri.port.takeIf { it != -1 } ?: if (uri.scheme == "wss") 443 else 80, uri.scheme == "wss", uri.rawPath.orEmpty()),
+    )
+    var requested: JsonObject? = null
+    withStartedTalk(sessionKey = key, responseForRequest = { request, _ ->
+      if (request["method"]?.jsonPrimitive?.content == "talk.session.create") requested = request["params"]?.jsonObject
+      null
+    }) {
+      assertEquals(BuildConfig.DEFAULT_SESSION_KEY.ifEmpty { key }, requested?.get("sessionKey")?.jsonPrimitive?.content)
+      assertEquals("gateway-relay", requested?.get("transport")?.jsonPrimitive?.content)
+      assertEquals("agent-consult", requested?.get("brain")?.jsonPrimitive?.content)
+    }
+  }
+
   @Test
   fun phoneRealtimeRetriesWithoutLanguageWhenOlderGatewayRejectsCreateParams() =
     runTest {
@@ -819,21 +844,21 @@ class TalkModeManagerTest {
   fun talkConfigChangedRefreshesNextUseWithoutStoppingCapture() =
     runBlocking {
       installSpeechRecognitionService()
-      val config = AtomicReference(nativeTalkConfig("de-DE"))
+      val config = AtomicReference(talkConfig("de-DE"))
       withStartedTalk(responseForRequest = { request, _ ->
         config.get().takeIf { request.getValue("method").jsonPrimitive.content == "talk.config" }
       }) { proof ->
-        val recognizer = currentRecognizer()
-        config.set(nativeTalkConfig("en-US"))
+        val relaySession = readPrivateField(proof.manager, "realtimeSessionId")
+        config.set(talkConfig("en-US"))
         proof.manager.handleGatewayEvent("config.changed", "{}")
 
         assertTrue(proof.manager.isListening.value)
-        assertFalse(recognizer.isDestroyed)
+        assertNotNull(relaySession)
         val language = proof.scope.async { proof.manager.resolveRealtimeLanguageHint("fr") }
         awaitTalkWork(proof) { language.isCompleted }
 
         assertEquals("en", language.await())
-        assertTrue(currentRecognizer() === recognizer)
+        assertEquals(relaySession, readPrivateField(proof.manager, "realtimeSessionId"))
       }
     }
 
@@ -841,11 +866,11 @@ class TalkModeManagerTest {
   fun removedSpeechInterruptionSettingDoesNotKeepInterruptingPlayback() =
     runBlocking {
       installSpeechRecognitionService()
-      val config = AtomicReference(nativeTalkConfig("de-DE", interrupt = true))
+      val config = AtomicReference(talkConfig("de-DE", interrupt = true))
       withStartedTalk(responseForRequest = { request, _ ->
         config.get().takeIf { request.getValue("method").jsonPrimitive.content == "talk.config" }
       }) { proof ->
-        config.set(nativeTalkConfig("de-DE"))
+        config.set(talkConfig("de-DE"))
         val refresh = proof.scope.async { proof.manager.refreshConfig() }
         awaitTalkWork(proof) { refresh.isCompleted }
         refresh.await()
@@ -855,8 +880,7 @@ class TalkModeManagerTest {
         proof.scheduler.runCurrent()
         assertTrue(proof.manager.isSpeaking.value)
 
-        currentRecognizer().triggerOnPartialResults(recognitionResults("Different user words"))
-        proof.scheduler.runCurrent()
+        assertNull("Removed interruption must not open a native recognizer", ShadowSpeechRecognizer.getLatestSpeechRecognizer())
 
         assertTrue("Removing interruptOnSpeech must restore the Android default", proof.manager.isSpeaking.value)
         proof.player.finished.complete(Unit)
@@ -879,7 +903,7 @@ class TalkModeManagerTest {
       val held = ConcurrentLinkedQueue<Pair<String, WebSocket>>()
       withStartedTalk(
         responseForRequest = { request, _ ->
-          nativeTalkConfig("de-DE").takeIf { request.getValue("method").jsonPrimitive.content == "talk.config" }
+          talkConfig("de-DE").takeIf { request.getValue("method").jsonPrimitive.content == "talk.config" }
         },
         interceptRequest = { request, socket ->
           val hold = request.getValue("method").jsonPrimitive.content == "talk.config" && holdReads.get()
@@ -894,7 +918,7 @@ class TalkModeManagerTest {
         val (oldId, socket) = held.remove()
         val refresh = proof.scope.async { proof.manager.refreshConfig() }
         proof.scheduler.runCurrent()
-        socket.send("""{"type":"res","id":"$oldId","ok":true,"payload":${nativeTalkConfig("de-DE")}}""")
+        socket.send("""{"type":"res","id":"$oldId","ok":true,"payload":${talkConfig("de-DE")}}""")
         awaitTalkWork(proof) { held.isNotEmpty() }
         assertEquals(1, held.size)
         // The same-socket health reply is ordered after the old config response;
@@ -906,7 +930,7 @@ class TalkModeManagerTest {
         assertFalse("A superseded config read must not release its consumer with old settings", language.isCompleted)
 
         val (newId, newSocket) = held.remove()
-        newSocket.send("""{"type":"res","id":"$newId","ok":true,"payload":${nativeTalkConfig("en-US")}}""")
+        newSocket.send("""{"type":"res","id":"$newId","ok":true,"payload":${talkConfig("en-US")}}""")
         awaitTalkWork(proof) { language.isCompleted && refresh.isCompleted }
         assertEquals("en", language.await())
         refresh.await()
@@ -921,7 +945,7 @@ class TalkModeManagerTest {
       val failures = AtomicLong()
       withStartedTalk(
         responseForRequest = { request, _ ->
-          nativeTalkConfig("de-DE").takeIf { request.getValue("method").jsonPrimitive.content == "talk.config" }
+          talkConfig("de-DE").takeIf { request.getValue("method").jsonPrimitive.content == "talk.config" }
         },
         interceptRequest = { request, socket ->
           val fail = request.getValue("method").jsonPrimitive.content == "talk.config" && failReads.get()
@@ -948,7 +972,7 @@ class TalkModeManagerTest {
   private fun verifyConfigResponseOwnership(loadNewerBeforeRelease: Boolean) =
     runBlocking {
       installSpeechRecognitionService()
-      val config = AtomicReference(nativeTalkConfig("de-DE"))
+      val config = AtomicReference(talkConfig("de-DE"))
       val holdNext = AtomicBoolean(false)
       val held = ConcurrentLinkedQueue<Pair<String, WebSocket>>()
       withStartedTalk(
@@ -965,12 +989,12 @@ class TalkModeManagerTest {
         val oldRefresh = proof.scope.async { proof.manager.refreshConfig() }
         awaitTalkWork(proof) { held.isNotEmpty() }
         assertEquals(1, held.size)
-        config.set(nativeTalkConfig("en-US"))
+        config.set(talkConfig("en-US"))
         proof.manager.handleGatewayEvent("config.changed", "{}")
         val refresh = if (loadNewerBeforeRelease) proof.scope.async { proof.manager.refreshConfig() } else null
         proof.scheduler.runCurrent()
         val (id, socket) = held.remove()
-        socket.send("""{"type":"res","id":"$id","ok":true,"payload":${nativeTalkConfig("de-DE")}}""")
+        socket.send("""{"type":"res","id":"$id","ok":true,"payload":${talkConfig("de-DE")}}""")
         awaitTalkWork(proof) { oldRefresh.isCompleted && refresh?.isCompleted != false }
         oldRefresh.await()
         refresh?.await()
@@ -982,7 +1006,7 @@ class TalkModeManagerTest {
       }
     }
 
-  private fun nativeTalkConfig(
+  private fun talkConfig(
     locale: String,
     interrupt: Boolean? = null,
   ): String =
@@ -1003,279 +1027,105 @@ class TalkModeManagerTest {
     }.toString()
 
   @Test
-  fun nativeTalkSendsRecognizedPhraseAfterSilenceAndRestartsAfterReply() =
+  fun missingCatalogAttemptsRelayAndShowsRejectionWithoutNativeFallback() =
     runBlocking {
-      withNativeTalk { proof, sends ->
-        val recognizer = currentRecognizer()
-        recognizer.triggerOnReadyForSpeech(Bundle())
-        recognizer.triggerOnEndOfSpeech()
-        recognizer.triggerOnResults(recognitionResults("Synthetic native Talk phrase"))
-        advanceTalkSilence(proof)
-        awaitTalkWork(proof) { sends.isNotEmpty() }
-
-        assertEquals("Recognized native speech must reach chat.send after the configured silence", 1, sends.size)
-        assertNull("Native Talk must inherit the session's model-aware thinking policy", sends.single()["thinking"])
-        assertEquals(
-          "main",
-          sends
-            .single()
-            .getValue("sessionKey")
-            .jsonPrimitive.content,
-        )
-        assertTrue(
-          sends
-            .single()
-            .getValue("message")
-            .jsonPrimitive.content
-            .endsWith("Synthetic native Talk phrase"),
-        )
-        awaitTalkWork(proof) { proof.synthesizer.requested.isCompleted }
-        assertTrue(recognizer.isDestroyed)
-        completeRemoteSynthesis(proof.synthesizer)
-        proof.scheduler.runCurrent()
-        assertEquals(1, proof.player.playCalls)
-        assertTrue(proof.manager.isSpeaking.value)
-
-        proof.player.finished.complete(Unit)
-        awaitTalkWork(proof) { proof.manager.isListening.value }
-
-        assertTrue(proof.manager.isEnabled.value)
-        assertTrue(proof.manager.isListening.value)
-        assertFalse(proof.manager.isSpeaking.value)
-        assertTrue(currentRecognizer() !== recognizer)
-        assertFalse(currentRecognizer().isDestroyed)
-      }
-    }
-
-  @Test
-  fun nativeStopThenStartKeepsReplacementAndRejectsRetiredResults() =
-    runBlocking {
-      withNativeTalk { proof, sends ->
-        val retired = currentRecognizer()
-        withContext(Dispatchers.Default) { proof.manager.setEnabled(false) }
-        proof.manager.setEnabled(true)
-        val statusBeforeRetiredCallback = proof.manager.statusText.value
-        retired.triggerOnError(SpeechRecognizer.ERROR_NETWORK)
-        assertEquals(statusBeforeRetiredCallback, proof.manager.statusText.value)
-        // Replacement capture waits for physical retirement of the old recognizer.
-        awaitTalkWork(proof) { proof.manager.isListening.value }
-        val replacement = currentRecognizer()
-        assertTrue(replacement !== retired)
-        assertTrue(retired.isDestroyed)
-        assertFalse("An old stop must not destroy the replacement recognizer", replacement.isDestroyed)
-
-        replacement.triggerOnResults(recognitionResults("Current capture"))
-        retired.triggerOnResults(recognitionResults("Retired capture"))
-        advanceTalkSilence(proof)
-        awaitTalkWork(proof) { sends.isNotEmpty() }
-
-        assertEquals(1, sends.size)
-        assertTrue(
-          sends
-            .single()
-            .getValue("message")
-            .jsonPrimitive.content
-            .endsWith("Current capture"),
-        )
-      }
-    }
-
-  @Test
-  fun pushToTalkTakeoverRetiresNativeSilenceAndRecognizer() =
-    runBlocking {
-      withNativeTalk { proof, sends ->
-        val native = currentRecognizer()
-        native.triggerOnPartialResults(recognitionResults("Retired native partial"))
-        val beginning = proof.scope.async { proof.manager.beginPushToTalk(allowNewCapture = true) }
-        awaitTalkWork(proof) { beginning.isCompleted }
-        val capture = beginning.await()
-        val ptt = currentRecognizer()
-        assertTrue(native.isDestroyed)
-        assertTrue(ptt !== native)
-
-        ptt.triggerOnResults(recognitionResults("Push to talk phrase"))
-        native.triggerOnResults(recognitionResults("Retired native result"))
-        val ending = proof.scope.async { proof.manager.endPushToTalk() }
-        awaitTalkWork(proof) { ending.isCompleted }
-        val ended = ending.await()
-        assertEquals(capture.captureId, ended.captureId)
-        assertEquals("queued", ended.status)
-        assertEquals("Push to talk phrase", ended.transcript)
-        advanceTalkSilence(proof)
-        awaitTalkWork(proof) { sends.isNotEmpty() }
-
-        assertEquals(1, sends.size)
-        assertTrue(
-          sends
-            .single()
-            .getValue("message")
-            .jsonPrimitive.content
-            .endsWith("Push to talk phrase"),
-        )
-      }
-    }
-
-  @Test
-  fun nativeTalkResumesAfterCancelledOrEmptyPushToTalk() =
-    runBlocking {
-      for (emptyResult in listOf(false, true)) {
-        withNativeTalk { proof, sends ->
-          val beginning = proof.scope.async { proof.manager.beginPushToTalk(allowNewCapture = true) }
-          awaitTalkWork(proof) { beginning.isCompleted }
-          beginning.await()
-          val ptt = currentRecognizer()
-          if (emptyResult) ptt.triggerOnResults(recognitionResults(""))
-          val ending =
-            proof.scope.async {
-              if (emptyResult) proof.manager.endPushToTalk() else proof.manager.cancelPushToTalk()
-            }
-          awaitTalkWork(proof) { ending.isCompleted }
-          assertEquals(if (emptyResult) "empty" else "cancelled", ending.await().status)
-          awaitTalkWork(proof) { proof.manager.isListening.value }
-
-          assertTrue(ptt.isDestroyed)
-          assertTrue(proof.manager.isEnabled.value)
-          assertTrue("Native Talk must resume after PTT (empty=$emptyResult)", proof.manager.isListening.value)
-          assertTrue(currentRecognizer() !== ptt)
-          assertFalse(currentRecognizer().isDestroyed)
-          assertTrue(sends.isEmpty())
-        }
-      }
-    }
-
-  @Test
-  fun nativeTalkKeepsListeningWithSpeakerOff() =
-    runBlocking {
-      withNativeTalk { proof, sends ->
-        proof.manager.setPlaybackEnabled(false)
-        currentRecognizer().triggerOnResults(recognitionResults("Silent native reply"))
-        advanceTalkSilence(proof)
-        awaitTalkWork(proof) { sends.isNotEmpty() }
-        assertEquals(1, sends.size)
-        awaitTalkWork(proof) { proof.manager.isListening.value }
-
-        assertTrue("Speaker-off must not stop native capture after its reply", proof.manager.isListening.value)
-        assertTrue(proof.manager.isEnabled.value)
-        assertFalse(proof.synthesizer.requested.isCompleted)
-        assertEquals(0, proof.player.playCalls)
-      }
-    }
-
-  @Test
-  fun mutingNativeReplyDoesNotStopCapture() =
-    runBlocking {
-      for (duringPreparation in listOf(true, false)) {
-        withNativeTalk { proof, sends ->
-          currentRecognizer().triggerOnResults(recognitionResults("Mute this native reply"))
-          advanceTalkSilence(proof)
-          awaitTalkWork(proof) { proof.synthesizer.requested.isCompleted }
-          assertEquals(1, sends.size)
-          assertTrue(proof.synthesizer.requested.isCompleted)
-          if (!duringPreparation) {
-            completeRemoteSynthesis(proof.synthesizer)
-            proof.scheduler.runCurrent()
-            assertEquals(1, proof.player.playCalls)
+      installSpeechRecognitionService()
+      val requests = ConcurrentLinkedQueue<JsonObject>()
+      withStartedTalk(
+        expectStartupFailure = true,
+        responseForRequest = { request, _ ->
+          """{"config":{"talk":{"realtime":{"model":"gpt-live-1-codex"}}}}"""
+            .takeIf { request.getValue("method").jsonPrimitive.content == "talk.config" }
+        },
+        interceptRequest = { request, socket ->
+          requests.add(request)
+          val reject = request.getValue("method").jsonPrimitive.content == "talk.session.create"
+          if (reject) {
+            val id = request.getValue("id").jsonPrimitive.content
+            socket.send("""{"type":"res","id":"$id","ok":false,"error":{"code":"UNAVAILABLE","message":"Realtime provider is restarting"}}""")
           }
-
-          proof.manager.setPlaybackEnabled(false)
-          proof.scheduler.runCurrent()
-          awaitTalkWork(proof) { proof.manager.isListening.value }
-
-          assertTrue("Muting playback must not retire native capture (preparing=$duringPreparation)", proof.manager.isListening.value)
-          assertTrue(proof.manager.isEnabled.value)
-          assertFalse(proof.manager.isSpeaking.value)
-          assertEquals(0, proof.callbackDepth())
-        }
+          reject
+        },
+      ) { proof ->
+        assertEquals(1, requests.count { it.getValue("method").jsonPrimitive.content == "talk.session.create" })
+        assertFalse(proof.manager.isEnabled.value)
+        assertTrue(proof.manager.statusText.value.contains("Realtime provider is restarting"))
+        assertNull(ShadowSpeechRecognizer.getLatestSpeechRecognizer())
+        assertFalse(proof.synthesizer.requested.isCompleted)
+        assertTrue(requests.none { it.getValue("method").jsonPrimitive.content in setOf("talk.speak", "chat.send") })
       }
     }
 
   @Test
-  fun stoppingNativeCaptureWhileMutingDoesNotRestartIt() =
+  fun realtimeProviderFailureStopsWithoutNativeFallback() =
     runBlocking {
-      withNativeTalk { proof, sends ->
-        currentRecognizer().triggerOnResults(recognitionResults("Stop this native turn"))
-        advanceTalkSilence(proof)
-        awaitTalkWork(proof) { proof.synthesizer.requested.isCompleted }
-        assertEquals(1, sends.size)
-        assertTrue(proof.synthesizer.requested.isCompleted)
+      installSpeechRecognitionService()
+      val requests = ConcurrentLinkedQueue<JsonObject>()
+      withStartedTalk(
+        responseForRequest = { request, _ ->
+          requests.add(request)
+          """{"config":{"talk":{"realtime":{"model":"gpt-live-1-codex"}}}}"""
+            .takeIf { request.getValue("method").jsonPrimitive.content == "talk.config" }
+        },
+      ) { proof ->
+        val creates = requests.filter { it.getValue("method").jsonPrimitive.content == "talk.session.create" }
+        assertEquals("Talk must use the configured realtime relay", 1, creates.size)
+        val params = creates.single().getValue("params").jsonObject
+        assertEquals("gateway-relay", params.getValue("transport").jsonPrimitive.content)
+        assertEquals("realtime", params.getValue("mode").jsonPrimitive.content)
+        assertEquals("agent-consult", params.getValue("brain").jsonPrimitive.content)
+        assertNull("The configured voice must remain the Gateway's choice", params["voice"])
+        assertNull("Relay capture must not start Google speech recognition", ShadowSpeechRecognizer.getLatestSpeechRecognizer())
 
-        proof.manager.setPlaybackEnabled(false)
-        proof.manager.setEnabled(false)
+        proof.manager.realtimeEvent("""{"relaySessionId":"playback-relay","type":"error","message":"OpenAI GPT-Live sideband closed (code 1006)","code":"realtime_unavailable"}""")
+        proof.manager.realtimeEvent("""{"relaySessionId":"playback-relay","type":"close","reason":"error"}""")
         proof.scheduler.runCurrent()
-        shadowOf(Looper.getMainLooper()).idle()
 
         assertFalse(proof.manager.isEnabled.value)
-        assertFalse(proof.manager.isListening.value)
-        assertFalse(proof.manager.isSpeaking.value)
-        assertTrue(currentRecognizer().isDestroyed)
-        assertEquals(0, proof.callbackDepth())
+        assertTrue(proof.manager.statusText.value.contains("code 1006"))
+        assertNull(ShadowSpeechRecognizer.getLatestSpeechRecognizer())
+        assertFalse("Relay failure must not request synthesized speech", proof.synthesizer.requested.isCompleted)
+        assertTrue(requests.none { it.getValue("method").jsonPrimitive.content in setOf("talk.speak", "chat.send") })
       }
     }
 
   @Test
-  fun pushToTalkDuringNativeReplyKeepsTheNewCapture() =
+  fun pushToTalkSendsOnlyRecognizedTextToUserBubble() =
     runBlocking {
-      withNativeTalk { proof, sends ->
-        currentRecognizer().triggerOnResults(recognitionResults("Interrupt this native reply"))
-        advanceTalkSilence(proof)
-        awaitTalkWork(proof) { proof.synthesizer.requested.isCompleted }
-        assertEquals(1, sends.size)
-        assertTrue(proof.synthesizer.requested.isCompleted)
-        completeRemoteSynthesis(proof.synthesizer)
-        proof.scheduler.runCurrent()
-        assertTrue(proof.manager.isSpeaking.value)
-
-        val beginning = proof.scope.async { proof.manager.beginPushToTalk(allowNewCapture = true) }
-        awaitTalkWork(proof) { beginning.isCompleted }
-        val capture = beginning.await()
-        val ptt = currentRecognizer()
-        assertTrue(proof.manager.isListening.value)
-        assertEquals(capture.captureId, proof.manager.activePushToTalkCaptureId)
-        ptt.triggerOnResults(recognitionResults("Current push to talk phrase"))
-        assertFalse("The PTT recognizer must still own its delivered result", proof.manager.isListening.value)
-        val ending = proof.scope.async { proof.manager.endPushToTalk() }
-        awaitTalkWork(proof) { ending.isCompleted }
-
-        assertEquals("Current push to talk phrase", ending.await().transcript)
-      }
-    }
-
-  private suspend fun withNativeTalk(block: suspend (RealtimePlaybackProof, ConcurrentLinkedQueue<JsonObject>) -> Unit) {
-    installSpeechRecognitionService()
-    val sends = ConcurrentLinkedQueue<JsonObject>()
-    val relayCreates = ConcurrentLinkedQueue<JsonObject>()
-    withStartedTalk(
-      responseForRequest = { request, _ ->
+      installSpeechRecognitionService()
+      val sends = ConcurrentLinkedQueue<JsonObject>()
+      withStartedTalk(responseForRequest = { request, _ ->
         when (request.getValue("method").jsonPrimitive.content) {
-          "talk.config" -> {
-            """{"config":{"talk":{"realtime":{"model":"gpt-live"},"silenceTimeoutMs":800}}}"""
-          }
-
-          "talk.session.create" -> {
-            relayCreates.add(request)
-            null
-          }
-
           "chat.send" -> {
             sends.add(request.getValue("params").jsonObject)
-            """{"runId":"native-talk-turn","status":"ok"}"""
+            """{"runId":"push-to-talk-turn","status":"ok"}"""
           }
-
-          "chat.history" -> {
-            """{"messages":[{"role":"assistant","content":[{"type":"text","text":"Synthetic native reply"}]}]}"""
-          }
-
-          else -> {
-            null
-          }
+          "chat.history" -> """{"messages":[{"role":"assistant","content":"Synthetic reply"}]}"""
+          else -> null
         }
-      },
-    ) { proof ->
-      assertEquals("Listening", proof.manager.statusText.value)
-      assertTrue(relayCreates.isEmpty())
-      block(proof, sends)
+      }) { proof ->
+        proof.manager.setPlaybackEnabled(false)
+        val beginning = proof.scope.async { proof.manager.beginPushToTalk(allowNewCapture = true) }
+        proof.scheduler.runCurrent()
+        awaitTalkWork(proof) {
+          proof.drainCancelledCapture()
+          beginning.isCompleted
+        }
+        beginning.await()
+        currentRecognizer().triggerOnResults(recognitionResults("Synthetic push to talk phrase"))
+        val ending = proof.scope.async { proof.manager.endPushToTalk() }
+        awaitTalkWork(proof) { ending.isCompleted && sends.isNotEmpty() }
+        assertEquals("Synthetic push to talk phrase", ending.await().transcript)
+        assertEquals(1, sends.size)
+        val sentText = sends.single().getValue("message").jsonPrimitive.content
+        val userMessage = buildJsonObject {
+          put("role", "user")
+          put("content", sentText)
+        }
+        assertEquals("Synthetic push to talk phrase", sentText)
+        assertEquals("Synthetic push to talk phrase", chatMessagePlainText(parseChatMessageContents(userMessage)))
+      }
     }
-  }
 
   private fun currentRecognizer(): ShadowSpeechRecognizer {
     shadowOf(Looper.getMainLooper()).idle()
@@ -1283,15 +1133,6 @@ class TalkModeManagerTest {
   }
 
   private fun recognitionResults(text: String) = Bundle().apply { putStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION, arrayListOf(text)) }
-
-  private fun advanceTalkSilence(proof: RealtimePlaybackProof) {
-    repeat(12) {
-      ShadowSystemClock.advanceBy(Duration.ofMillis(100))
-      proof.scheduler.advanceTimeBy(100)
-      shadowOf(Looper.getMainLooper()).idle()
-      proof.scheduler.runCurrent()
-    }
-  }
 
   private suspend fun awaitTalkWork(
     proof: RealtimePlaybackProof,
@@ -1735,6 +1576,38 @@ class TalkModeManagerTest {
         runtime.releaseDictationMic()
         assertTrue(runtime.setCameraAudioCaptureActive(true))
         runtime.setCameraAudioCaptureActive(false)
+      }
+    }
+
+  @Test
+  fun lateManualReplyDoesNotStartDedicatedSpeechWhileTalkOwnsAudio() =
+    runBlocking {
+      withNodeOwningRealtimePlayback { runtime, proof ->
+        val speaker = readPrivateField(runtime, "voiceReplySpeakerLazy") as Lazy<*>
+        val mic = (readPrivateField(runtime, "micCapture\$delegate") as Lazy<*>).value as MicCaptureManager
+        @Suppress("UNCHECKED_CAST")
+        val speak = readPrivateField(mic, "speakAssistantReply") as suspend (String) -> Unit
+        assertFalse(speaker.isInitialized())
+        speak("Late manual reply")
+        assertFalse("Talk owns output before the dedicated speaker can start", speaker.isInitialized())
+        assertTrue(proof.manager.isEnabled.value)
+        assertTrue(proof.manager.isListening.value)
+      }
+    }
+
+  @Test
+  fun manualSpeechFailureReachesTheChatNoticeObservable() =
+    runBlocking {
+      withNodeOwningRealtimePlayback { runtime, proof ->
+        val mic = (readPrivateField(runtime, "micCapture\$delegate") as Lazy<*>).value as MicCaptureManager
+        val failedSpeech: suspend (String) -> Unit = { error("talk provider not configured") }
+        setPrivateField(mic, "speakAssistantReply", failedSpeech)
+        setPrivateField(mic, "pendingRunId", "manual-failed-run")
+        mic.handleGatewayEvent("chat", chatFinalPayload(runId = "manual-failed-run", text = "Reply still shown"))
+        awaitTalkWork(proof) { mic.statusText.value.contains("talk provider not configured") }
+        assertEquals("Speak failed: talk provider not configured", runtime.chatError.value)
+        assertEquals("Speak failed: talk provider not configured", userFacingChatError(checkNotNull(runtime.chatError.value), gatewayConnected = true))
+        assertEquals("Reply still shown", mic.conversation.value.last().text)
       }
     }
 
@@ -2479,6 +2352,29 @@ class TalkModeManagerTest {
     }
 
   @Test
+  fun serverManagedConsultFinalDoesNotDuplicateRealtimeAudioThroughTts() =
+    runBlocking {
+      val socket = CompletableDeferred<WebSocket>()
+      withStartedTalk(responseForRequest = { _, peer -> socket.complete(peer); null }) { proof ->
+        proof.manager.ttsOnAllResponses = true
+        val generationBefore = playbackGeneration(proof.manager).get()
+        socket.await().send("""{"type":"event","event":"chat","payload":{"sessionKey":"main","runId":"server-consult","state":"final","message":{"role":"assistant","content":"Your latest email is ready."}}}""")
+        val barrier = proof.scope.async { proof.session.request("health", "{}") }
+        awaitTalkWork(proof) { barrier.isCompleted }
+        barrier.await()
+        proof.scheduler.runCurrent()
+        assertEquals("The active relay owns consult speech", generationBefore, playbackGeneration(proof.manager).get())
+        assertFalse(proof.synthesizer.requested.isCompleted)
+        assertNull(ShadowTextToSpeech.getLastTextToSpeechInstance())
+        proof.manager.realtimeEvent("""{"relaySessionId":"playback-relay","type":"transcript","role":"assistant","text":"Your latest email is ready.","final":true}""")
+        proof.manager.realtimeEvent("""{"relaySessionId":"playback-relay","type":"audio","talkEvent":{"turnId":"consult-turn"},"audioBase64":"AAAAAAAAAAA="}""")
+        proof.scheduler.runCurrent()
+        assertTrue(proof.manager.conversation.value.any { it.role == VoiceConversationRole.Assistant && it.text == "Your latest email is ready." })
+        assertTrue("Relay audio must still reach the output track", proof.writes.isNotEmpty())
+      }
+    }
+
+  @Test
   fun relayConsultReturnsCanonicalOwnedResultOverGatewayConnection() =
     runBlocking {
       for ((voiceKey, agentKey) in listOf("main" to "agent:voice:main", "global" to "global")) {
@@ -2542,6 +2438,7 @@ class TalkModeManagerTest {
 
   private suspend fun withStartedTalk(
     sessionKey: String = "main",
+    expectStartupFailure: Boolean = false,
     captureRelayStopNotification: () -> ((() -> Boolean) -> Unit) = { {} },
     responseForRequest: (JsonObject, WebSocket) -> String? = { _, _ -> null },
     interceptRequest: (JsonObject, WebSocket) -> Boolean = { _, _ -> false },
@@ -2654,11 +2551,12 @@ class TalkModeManagerTest {
         manager.setMainSessionKey(sessionKey)
         manager.setEnabled(true)
         val deadline = System.nanoTime() + 5_000_000_000L
-        while (!manager.isListening.value) {
+        while (!manager.isListening.value && manager.isEnabled.value) {
           scheduler.runCurrent()
           check(System.nanoTime() < deadline) { "Real gateway session did not start realtime Talk: ${manager.statusText.value}" }
           withContext(Dispatchers.Default) { delay(10) }
         }
+        check(expectStartupFailure || manager.isListening.value) { "Talk startup failed: ${manager.statusText.value}" }
         ShadowAudioTrack.addAudioDataListener(listener)
         block(
           RealtimePlaybackProof(
@@ -2714,7 +2612,7 @@ class TalkModeManagerTest {
         scope = CoroutineScope(coroutineContext + managerJob),
       )
     withMain {
-      val playback = launch { manager.speakAssistantReply("Local reply") }
+      val playback = async { runCatching { manager.speakAssistantReply("Local reply") } }
       try {
         runCurrent()
         assertEquals(1, player.playCalls)
@@ -2733,52 +2631,24 @@ class TalkModeManagerTest {
   }
 
   @Test
-  fun localFallbackKeepsWholeReplyAndBalancesCallbacksOnCompletionOrStop() =
+  fun unavailableSpeechIsVisibleAndPropagatesWithoutGoogleTts() =
     runTest {
-      for (stopAfterFirst in listOf(false, true)) {
-        val callbacks = mutableListOf<String>()
-        val synthesizer = FakeTalkSpeechSynthesizer()
-        synthesizer.result.complete(TalkSpeakResult.FallbackToLocal("Gateway TTS unavailable"))
-        val manager =
-          createManager(
-            talkSpeakClient = synthesizer,
-            scope = this,
-            onBeforeSpeak = { callbacks += "before" },
-            onAfterSpeak = { callbacks += "after" },
-          )
-        ShadowTextToSpeech.addLanguageAvailability(Locale.GERMAN)
-        withMain(cleanup = { manager.stopAllCapture() }) {
-          val reply = "Ein Wort. ".repeat(500).trim()
-          val speech = launch { manager.speakAssistantReply("{\"language\":\"de\",\"speed\":1.25}\n$reply") }
-          runCurrent()
-          val shadow = shadowOf(checkNotNull(ShadowTextToSpeech.getLastTextToSpeechInstance()))
-          shadow.onInitListener.onInit(TextToSpeech.SUCCESS)
-          runCurrent()
-
-          assertEquals(listOf("before"), callbacks)
-          assertTrue(manager.isSpeaking.value)
-          assertEquals(Locale.GERMAN, shadow.currentLanguage)
-          assertEquals(1, shadow.spokenTextList.size)
-          if (stopAfterFirst) manager.stopTts()
-          while (!speech.isCompleted) {
-            val submitted = shadow.spokenTextList.size
-            shadowOf(Looper.getMainLooper()).idle()
-            runCurrent()
-            assertEquals(submitted + if (speech.isCompleted) 0 else 1, shadow.spokenTextList.size)
-          }
-
-          assertEquals(listOf("before", "after"), callbacks)
-          assertFalse(manager.isSpeaking.value)
-          val submittedText = shadow.spokenTextList.joinToString("")
-          if (stopAfterFirst) {
-            assertEquals(1, shadow.spokenTextList.size)
-            assertTrue(reply.startsWith(submittedText) && submittedText.length < reply.length)
-          } else {
-            assertEquals(reply, submittedText)
-          }
-          assertTrue(shadow.spokenTextList.all { it.length <= TextToSpeech.getMaxSpeechInputLength() })
-        }
-        shadowOf(Looper.getMainLooper()).idle()
+      val callbacks = mutableListOf<String>()
+      val client = TalkSpeakClient(requestDetailed = { _, _, _ ->
+        GatewaySession.RpcResult(ok = false, payloadJson = null,
+          error = GatewaySession.ErrorShape(code = "UNAVAILABLE", message = "talk provider not configured", details = null))
+      })
+      val manager = createManager(talkSpeakClient = client, scope = this,
+        onBeforeSpeak = { callbacks += "before" }, onAfterSpeak = { callbacks += "after" })
+      withMain(cleanup = manager::stopAllCapture) {
+        val speech = async { runCatching { manager.speakAssistantReply("Visible failed reply") } }
+        runCurrent()
+        assertNull("Provider absence must not construct Google TTS", ShadowTextToSpeech.getLastTextToSpeechInstance())
+        assertTrue(speech.isCompleted)
+        assertTrue(speech.await().isFailure)
+        assertTrue(manager.statusText.value.contains("talk provider not configured"))
+        assertFalse(manager.isSpeaking.value)
+        assertEquals(listOf("before", "after"), callbacks)
       }
     }
 

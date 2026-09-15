@@ -82,6 +82,39 @@ class MicCaptureManagerTest {
     }
 
   @Test
+  @OptIn(ExperimentalCoroutinesApi::class)
+  fun speechFailureIsVisibleWithoutDroppingTheAssistantReply() =
+    runTest {
+      val manager = createManager(scope = this, speakAssistantReply = { error("talk provider not configured") })
+      manager.onGatewayConnectionChanged(true)
+      manager.submitTranscribedMessage("Check my email")
+      runCurrent()
+      manager.handleGatewayEvent("chat", chatFinalPayload(runId = "run-1", text = "Your latest email is ready."))
+      advanceUntilIdle()
+      assertEquals("Speak failed: talk provider not configured", manager.statusText.value)
+      assertEquals("Your latest email is ready.", manager.conversation.value.last().text)
+    }
+
+  @Test
+  @OptIn(ExperimentalCoroutinesApi::class)
+  fun cancelledSpeechDoesNotPublishAProviderFailure() =
+    runTest {
+      var attempted = false
+      val manager = createManager(scope = this, speakAssistantReply = {
+        attempted = true
+        throw CancellationException("Speech replaced")
+      })
+      manager.onGatewayConnectionChanged(true)
+      manager.submitTranscribedMessage("Check my email")
+      runCurrent()
+      manager.handleGatewayEvent("chat", chatFinalPayload(runId = "run-1", text = "Reply retained"))
+      advanceUntilIdle()
+      assertTrue(attempted)
+      assertFalse(manager.statusText.value.startsWith("Speak failed:"))
+      assertEquals("Reply retained", manager.conversation.value.last().text)
+    }
+
+  @Test
   fun transcriptionErrorDisablesMic() {
     val manager = createManager()
 
@@ -622,6 +655,7 @@ class MicCaptureManagerTest {
       ChatSendAck(runId = "run-1", status = "started")
     },
     refreshAfterTerminalSuccess: suspend () -> Unit = {},
+    speakAssistantReply: suspend (String) -> Unit = {},
   ): MicCaptureManager =
     MicCaptureManager(
       context =
@@ -640,6 +674,7 @@ class MicCaptureManagerTest {
       closeTranscriptionSession = { session -> closeTranscriptionSession(session.id) },
       sendToGateway = sendToGateway,
       refreshAfterTerminalSuccess = refreshAfterTerminalSuccess,
+      speakAssistantReply = speakAssistantReply,
     )
 
   private fun setTranscriptionSession(

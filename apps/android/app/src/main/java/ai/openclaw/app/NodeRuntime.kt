@@ -1382,11 +1382,19 @@ class NodeRuntime private constructor(
   private val connectAttemptSeq = AtomicLong(0)
 
   /**
-   * Builds the node-owned session key from stable device identity plus optional active agent.
+   * Resolves the scoped build default or the stable device-derived session key.
    */
   private fun resolveNodeMainSessionKey(agentId: String? = null): String {
     val deviceId = identityStore.loadOrCreate().deviceId
-    return buildNodeMainSessionKey(deviceId, agentId)
+    return buildNodeMainSessionKey(
+      deviceId,
+      agentId,
+      BuildConfig.DEFAULT_SESSION_KEY,
+      BuildConfig.DEFAULT_SESSION_GATEWAY_URL,
+      connectedEndpoint?.let { endpoint ->
+        endpoint.copy(tlsEnabled = connectionManager.resolveTlsParams(endpoint) != null)
+      },
+    )
   }
 
   private val _mainSessionKey = MutableStateFlow(resolveNodeMainSessionKey())
@@ -2234,8 +2242,7 @@ class NodeRuntime private constructor(
 
   private val voiceReplySpeakerLazy: Lazy<TalkModeManager> =
     lazy {
-      // Reuse the existing TalkMode speech engine for native Android TTS playback
-      // without enabling the legacy talk capture loop.
+      // Voice-tab replies share Gateway speech without starting continuous Talk capture.
       TalkModeManager(
         context = appContext,
         scope = scope,
@@ -2334,11 +2341,14 @@ class NodeRuntime private constructor(
       refreshAfterTerminalSuccess = {
         chat.refresh()
       },
+      onSpeechError = { chat.updateLocalizedErrorText(it) },
       speakAssistantReply = { text ->
         // Voice-tab replies should speak through the dedicated reply speaker.
         // Relying on talkMode.ttsOnAllResponses here can drop playback if the
         // chat-event path misses the terminal event for this turn.
-        voiceReplySpeaker.speakAssistantReply(text)
+        if (_voiceCaptureMode.value != VoiceCaptureMode.TalkMode) {
+          voiceReplySpeaker.speakAssistantReply(text)
+        }
       },
     )
   }
@@ -2367,6 +2377,7 @@ class NodeRuntime private constructor(
       },
       onBeforeSpeak = { micCapture.pauseForTts() },
       onAfterSpeak = { micCapture.resumeAfterTts() },
+      onSpeechError = { chat.updateLocalizedErrorText(it) },
       captureRelayStopNotification = {
         val ownershipEpoch = voiceCaptureOwnershipEpoch.get()
 
