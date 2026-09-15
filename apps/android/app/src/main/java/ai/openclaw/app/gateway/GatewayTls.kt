@@ -61,6 +61,7 @@ enum class GatewayTlsProbeFailure {
   TLS_UNAVAILABLE,
   TLS_HANDSHAKE_TIMEOUT,
   ENDPOINT_UNREACHABLE,
+  HOST_UNRESOLVED,
 }
 
 /** Result of probing a gateway TLS endpoint for first-use fingerprint capture. */
@@ -207,9 +208,9 @@ internal fun decideGatewayTlsTrust(
     }
   }
   if (stored != null) return GatewayTlsTrustDecision.PinnedTrust(stored)
-  if (probeResult.failure == GatewayTlsProbeFailure.ENDPOINT_UNREACHABLE) {
-    return GatewayTlsTrustDecision.Failed(GatewayTlsProbeFailure.ENDPOINT_UNREACHABLE)
-  }
+  probeResult.failure
+    ?.takeIf { it == GatewayTlsProbeFailure.ENDPOINT_UNREACHABLE || it == GatewayTlsProbeFailure.HOST_UNRESOLVED }
+    ?.let { return GatewayTlsTrustDecision.Failed(it) }
   return GatewayTlsTrustDecision.PromptRequired(
     fingerprintSha256 = null,
     previousFingerprintSha256 = null,
@@ -509,9 +510,11 @@ internal suspend fun probeGatewayTlsFingerprint(
             }
           }
 
-          is ConnectException,
-          is UnknownHostException,
-          -> {
+          is UnknownHostException -> {
+            GatewayTlsProbeFailure.HOST_UNRESOLVED
+          }
+
+          is ConnectException -> {
             GatewayTlsProbeFailure.ENDPOINT_UNREACHABLE
           }
 

@@ -474,6 +474,7 @@
     <string name="native_42e3a99c21767def" formatted="false" tools:ignore="Typos,TypographyDashes,TypographyEllipsis">"กำลังรอการอนุมัติอุปกรณ์"</string>
     <string name="native_430798d3e8250938" formatted="false" tools:ignore="Typos,TypographyDashes,TypographyEllipsis">"กำลังโหลดเธรด"</string>
     <string name="native_430df68ec29a85a2" formatted="false" tools:ignore="Typos,TypographyDashes,TypographyEllipsis">"ขณะนี้ Gateway นี้แสดงใบรับรองที่อุปกรณ์นี้เชื่อถือ"</string>
+    <string name="native_435be424f3e440dc" formatted="false" tools:ignore="Typos,TypographyDashes,TypographyEllipsis">"Gateway name not resolving"</string>
     <string name="native_4387e5d3966fc436" formatted="false" tools:ignore="Typos,TypographyDashes,TypographyEllipsis">"ระดับความพยายาม"</string>
     <string name="native_43905968a540af6a" formatted="false" tools:ignore="Typos,TypographyDashes,TypographyEllipsis">"เวลาเหลื่อม (มิลลิวินาที)"</string>
     <string name="native_43988c156beabf7d" formatted="false" tools:ignore="Typos,TypographyDashes,TypographyEllipsis">"event create"</string>
@@ -1637,6 +1638,7 @@
     <string name="native_f2bfed0b0c0055db" formatted="false" tools:ignore="Typos,TypographyDashes,TypographyEllipsis">"การตอบกลับด้วยเสียงหมดเวลา กำลังลองส่งรายการที่อยู่ในคิวอีกครั้ง"</string>
     <string name="native_f2cb21c53a33f72c" formatted="false" tools:ignore="Typos,TypographyDashes,TypographyEllipsis">"เค้าโครง: ละเอียด"</string>
     <string name="native_f2da2e47cd31a5dd" formatted="false" tools:ignore="Typos,TypographyDashes,TypographyEllipsis">"ไม่สามารถถอดรหัสรูปภาพนี้ได้"</string>
+    <string name="native_f2fbce0cafc10aac" formatted="false" tools:ignore="Typos,TypographyDashes,TypographyEllipsis">"Failed: the gateway name did not resolve. Check Tailscale DNS on this device, then retry."</string>
     <string name="native_f2fc431685c4e3e5" formatted="false" tools:ignore="Typos,TypographyDashes,TypographyEllipsis">"ข้อมูลลับที่ได้รับการปกป้อง"</string>
     <string name="native_f3753c0fe29b88db" formatted="false" tools:ignore="Typos,TypographyDashes,TypographyEllipsis">"Gateway, เสียง, การแจ้งเตือน, ความเป็นส่วนตัว"</string>
     <string name="native_f386c32c1bf437d9" formatted="false" tools:ignore="Typos,TypographyDashes,TypographyEllipsis">"ไฟล์ในพื้นที่ทำงานของเอเจนต์"</string>

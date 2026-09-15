@@ -843,6 +843,17 @@ class ShellScreenLogicTest {
   }
 
   @Test
+  fun gatewaySummaryNamesTheUnresolvedGatewayNameInsteadOfCertificateReview() {
+    assertEquals(
+      "Gateway name not resolving",
+      gatewaySummary(
+        "Failed: the gateway name did not resolve. Check Tailscale DNS on this device, then retry.",
+        isConnected = false,
+      ),
+    )
+  }
+
+  @Test
   fun gatewaySummaryFallsBackToGenericAuthLabelWithoutAKnownReason() {
     assertEquals("Authentication needed", gatewaySummary("auth failed", isConnected = false, gatewayConnectionProblem = null))
     assertEquals("Authentication needed", gatewaySummary("auth failed", isConnected = false, gatewayConnectionProblem = authProblem("SOME_UNMAPPED_CODE")))

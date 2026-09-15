@@ -50,6 +50,10 @@ internal fun gatewayStatusLabel(
       nativeString("Offline")
     }
 
+    status.contains("name did not resolve") -> {
+      nativeString("Gateway name not resolving")
+    }
+
     gatewayConnectionProblem?.isNetworkFailure == true && gatewayConnectionProblem.reason == "transport-cleanup" -> {
       nativeString("Stopping previous connection")
     }

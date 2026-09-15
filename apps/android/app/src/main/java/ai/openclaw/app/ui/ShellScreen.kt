@@ -1954,6 +1954,7 @@ internal fun gatewaySummary(
   if (isConnected) return if (statusText == "Connected (node offline)") gatewayStatusForDisplay(statusText) else nativeString("Online and ready")
   val status = statusText.trim().lowercase()
   return when {
+    status.contains("name did not resolve") -> nativeString("Gateway name not resolving")
     status.contains("connecting") || status.contains("reconnecting") -> nativeString("Connecting...")
     status.contains("pairing") -> nativeString("Waiting for pairing")
     status.contains("auth") || status.contains("device identity") -> gatewayAuthRecoveryLabel(gatewayConnectionProblem) ?: nativeString("Authentication needed")

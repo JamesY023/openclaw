@@ -474,6 +474,7 @@
     <string name="native_42e3a99c21767def" formatted="false" tools:ignore="Typos,TypographyDashes,TypographyEllipsis">"डिवाइस की स्वीकृति की प्रतीक्षा में"</string>
     <string name="native_430798d3e8250938" formatted="false" tools:ignore="Typos,TypographyDashes,TypographyEllipsis">"थ्रेड लोड हो रहा है"</string>
     <string name="native_430df68ec29a85a2" formatted="false" tools:ignore="Typos,TypographyDashes,TypographyEllipsis">"यह Gateway अब ऐसा प्रमाणपत्र प्रस्तुत करता है जिस पर यह डिवाइस भरोसा करता है."</string>
+    <string name="native_435be424f3e440dc" formatted="false" tools:ignore="Typos,TypographyDashes,TypographyEllipsis">"Gateway name not resolving"</string>
     <string name="native_4387e5d3966fc436" formatted="false" tools:ignore="Typos,TypographyDashes,TypographyEllipsis">"प्रयास"</string>
     <string name="native_43905968a540af6a" formatted="false" tools:ignore="Typos,TypographyDashes,TypographyEllipsis">"समय-अंतर मिलीसेकंड"</string>
     <string name="native_43988c156beabf7d" formatted="false" tools:ignore="Typos,TypographyDashes,TypographyEllipsis">"event create"</string>
@@ -1637,6 +1638,7 @@
     <string name="native_f2bfed0b0c0055db" formatted="false" tools:ignore="Typos,TypographyDashes,TypographyEllipsis">"वॉइस उत्तर का समय समाप्त हो गया; कतार में मौजूद टर्न के लिए फिर से प्रयास किया जा रहा है"</string>
     <string name="native_f2cb21c53a33f72c" formatted="false" tools:ignore="Typos,TypographyDashes,TypographyEllipsis">"लेआउट: विस्तृत"</string>
     <string name="native_f2da2e47cd31a5dd" formatted="false" tools:ignore="Typos,TypographyDashes,TypographyEllipsis">"इस छवि को डिकोड नहीं किया जा सका."</string>
+    <string name="native_f2fbce0cafc10aac" formatted="false" tools:ignore="Typos,TypographyDashes,TypographyEllipsis">"Failed: the gateway name did not resolve. Check Tailscale DNS on this device, then retry."</string>
     <string name="native_f2fc431685c4e3e5" formatted="false" tools:ignore="Typos,TypographyDashes,TypographyEllipsis">"सुरक्षित गोपनीय जानकारी"</string>
     <string name="native_f3753c0fe29b88db" formatted="false" tools:ignore="Typos,TypographyDashes,TypographyEllipsis">"Gateway, आवाज़, सूचनाएँ, गोपनीयता"</string>
     <string name="native_f386c32c1bf437d9" formatted="false" tools:ignore="Typos,TypographyDashes,TypographyEllipsis">"एजेंट की कार्यक्षेत्र फ़ाइलें"</string>

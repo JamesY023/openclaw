@@ -474,6 +474,7 @@
     <string name="native_42e3a99c21767def" formatted="false" tools:ignore="Typos,TypographyDashes,TypographyEllipsis">"En attente de l’approbation de l’appareil"</string>
     <string name="native_430798d3e8250938" formatted="false" tools:ignore="Typos,TypographyDashes,TypographyEllipsis">"Chargement du fil de discussion"</string>
     <string name="native_430df68ec29a85a2" formatted="false" tools:ignore="Typos,TypographyDashes,TypographyEllipsis">"Ce gateway présente désormais un certificat approuvé par cet appareil."</string>
+    <string name="native_435be424f3e440dc" formatted="false" tools:ignore="Typos,TypographyDashes,TypographyEllipsis">"Gateway name not resolving"</string>
     <string name="native_4387e5d3966fc436" formatted="false" tools:ignore="Typos,TypographyDashes,TypographyEllipsis">"Effort"</string>
     <string name="native_43905968a540af6a" formatted="false" tools:ignore="Typos,TypographyDashes,TypographyEllipsis">"Décalage en ms"</string>
     <string name="native_43988c156beabf7d" formatted="false" tools:ignore="Typos,TypographyDashes,TypographyEllipsis">"event create"</string>
@@ -1637,6 +1638,7 @@
     <string name="native_f2bfed0b0c0055db" formatted="false" tools:ignore="Typos,TypographyDashes,TypographyEllipsis">"Délai de réponse vocale dépassé; nouvelle tentative pour le tour en file d’attente"</string>
     <string name="native_f2cb21c53a33f72c" formatted="false" tools:ignore="Typos,TypographyDashes,TypographyEllipsis">"Disposition : Détaillée"</string>
     <string name="native_f2da2e47cd31a5dd" formatted="false" tools:ignore="Typos,TypographyDashes,TypographyEllipsis">"Cette image n’a pas pu être décodée."</string>
+    <string name="native_f2fbce0cafc10aac" formatted="false" tools:ignore="Typos,TypographyDashes,TypographyEllipsis">"Failed: the gateway name did not resolve. Check Tailscale DNS on this device, then retry."</string>
     <string name="native_f2fc431685c4e3e5" formatted="false" tools:ignore="Typos,TypographyDashes,TypographyEllipsis">"Secret protégé"</string>
     <string name="native_f3753c0fe29b88db" formatted="false" tools:ignore="Typos,TypographyDashes,TypographyEllipsis">"Gateway, voix, notifications, confidentialité"</string>
     <string name="native_f386c32c1bf437d9" formatted="false" tools:ignore="Typos,TypographyDashes,TypographyEllipsis">"Fichiers de l’espace de travail de l’agent"</string>

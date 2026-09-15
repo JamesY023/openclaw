@@ -303,6 +303,24 @@ class GatewayTlsTest {
       assertEquals(GatewayTlsProbeFailure.ENDPOINT_UNREACHABLE, result.failure)
     }
 
+  @Test
+  fun probeGatewayTlsFingerprint_reportsUnresolvedHostSeparatelyFromAnUnreachableEndpoint() =
+    runBlocking {
+      val result =
+        probeGatewayTlsFingerprint(
+          host = UNRESOLVABLE_HOST,
+          port = 443,
+          connectTimeoutMs = 1_000,
+          handshakeTimeoutMs = 1_000,
+        )
+
+      assertEquals("HOST_UNRESOLVED", result.failure?.name)
+      assertEquals(
+        GatewayTlsTrustDecision.Failed(requireNotNull(result.failure)),
+        decideGatewayTlsTrust(storedFingerprint = null, systemTrustCandidate = true, probeResult = result),
+      )
+    }
+
   private class TcpTestServer(
     private val handler: (Socket) -> Unit,
   ) : AutoCloseable {
@@ -379,6 +397,9 @@ class GatewayTlsTest {
 
   private companion object {
     const val LOOPBACK_HOST = "127.0.0.1"
+
+    // RFC 2606 reserves .invalid, so this name is guaranteed never to resolve.
+    const val UNRESOLVABLE_HOST = "gateway.invalid"
     val LOOPBACK_ADDRESS: InetAddress = InetAddress.getByName(LOOPBACK_HOST)
 
     fun unusedLoopbackPort(): Int =

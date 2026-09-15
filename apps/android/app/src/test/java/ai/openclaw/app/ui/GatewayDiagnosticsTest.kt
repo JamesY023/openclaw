@@ -31,6 +31,14 @@ class GatewayDiagnosticsTest {
   }
 
   @Test
+  fun unresolvedGatewayNameLabelsDnsRatherThanCertificateOrReachability() {
+    assertEquals(
+      "Gateway name not resolving",
+      gatewayStatusLabel(GATEWAY_NAME_UNRESOLVED_STATUS, isConnected = false),
+    )
+  }
+
+  @Test
   fun endpointPrefersLiveRemoteAddress() {
     assertEquals(
       "wss://gateway.example.test",
@@ -93,4 +101,9 @@ class GatewayDiagnosticsTest {
       pauseReconnect = false,
       retryable = false,
     )
+
+  private companion object {
+    const val GATEWAY_NAME_UNRESOLVED_STATUS =
+      "Failed: the gateway name did not resolve. Check Tailscale DNS on this device, then retry."
+  }
 }

@@ -5268,6 +5268,10 @@ class NodeRuntime private constructor(
       GatewayTlsProbeFailure.ENDPOINT_UNREACHABLE -> {
         nativeText("Failed: couldn't reach the secure gateway endpoint for this host.").source
       }
+
+      GatewayTlsProbeFailure.HOST_UNRESOLVED -> {
+        nativeText("Failed: the gateway name did not resolve. Check Tailscale DNS on this device, then retry.").source
+      }
     }
 
   private fun hasRecordAudioPermission(): Boolean =
