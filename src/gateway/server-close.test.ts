@@ -1040,6 +1040,106 @@ describe("createGatewayCloseHandler", () => {
     ).toBe(true);
   });
 
+  it.each([
+    ["tailscale", (hang: () => Promise<void>) => ({ tailscaleCleanup: hang })],
+    ["sdk-resources", (hang: () => Promise<void>) => ({ closeSdkResources: hang })],
+    [
+      "plugin-state-store",
+      (hang: () => Promise<void>) => {
+        mocks.closePluginStateDatabase.mockImplementationOnce(hang);
+        return {};
+      },
+    ],
+  ] as const)("names a hung %s close step by its begin line", async (step, inject) => {
+    process.env.OPENCLAW_GATEWAY_RESTART_TRACE = "1";
+    const stuck = createDeferredCore();
+    const hang = vi.fn(() => stuck.promise);
+    const noop = () => vi.fn(async () => undefined);
+    const close = createGatewayCloseHandler(
+      createGatewayCloseTestDeps({
+        updateCheckStop: noop(),
+        drainActiveSessionsForShutdown: vi.fn<DrainActiveSessionsForShutdown>(async () => ({
+          emittedSessionIds: [],
+          timedOut: false,
+        })),
+        bonjourStop: noop(),
+        pluginServices: { stop: noop() } as never,
+        stopTaskRegistryMaintenance: noop(),
+        agentUnsub: noop(),
+        heartbeatUnsub: vi.fn(),
+        transcriptUnsub: vi.fn(),
+        lifecycleUnsub: vi.fn(),
+        taskUnsub: vi.fn(),
+        finishRequestEntries: noop(),
+        tailscaleCleanup: noop(),
+        closeSdkResources: noop(),
+        ...inject(hang),
+      }),
+    );
+    const lines = () => mocks.logInfo.mock.calls.map(([message]) => String(message));
+    const begins = () =>
+      lines().flatMap(
+        (line) => /^restart trace: restart\.close\.([a-z-]+)\.begin /u.exec(line)?.[1] ?? [],
+      );
+    const ends = () =>
+      lines().flatMap(
+        (line) => /^restart trace: restart\.close\.([a-z-]+) /u.exec(line)?.[1] ?? [],
+      );
+
+    startGatewayRestartTrace("stop.signal.received");
+    const closing = close({ reason: "test" });
+    try {
+      await vi.waitFor(() => expect(hang).toHaveBeenCalled());
+      expect(begins().at(-1)).toBe(step);
+      expect(ends()).not.toContain(step);
+    } finally {
+      stuck.resolve();
+      await closing;
+    }
+
+    const steps = [
+      "update-check",
+      "config-reloader",
+      "gateway-shutdown-hook",
+      "reply-drain",
+      "session-end-drain",
+      "bonjour",
+      "acp-session-manager",
+      "plugin-services",
+      "channels",
+      "code-mode-runs",
+      "agent-harnesses",
+      "ai-session-resources",
+      "provider-transport-dispatchers",
+      "bundle-runtimes",
+      "media-cleanup",
+      "gmail-watcher",
+      "cron",
+      "heartbeat-runner",
+      "task-registry-maintenance",
+      "agent-unsub",
+      "heartbeat-unsub",
+      "transcript-unsub",
+      "lifecycle-unsub",
+      "task-unsub",
+      "websocket-server",
+      "request-entries",
+      "http-server",
+      "tailscale",
+      "embedding-providers",
+      "cleanup-work-drain",
+      "plugin-services-cleanup",
+      "request-entries-final",
+      "media-cleanup-drains",
+      "plugin-host-registry",
+      "sdk-resources",
+      "plugin-state-store",
+      "global-singletons",
+    ];
+    expect(begins()).toEqual(steps);
+    expect(ends().filter((name) => name !== "total")).toEqual(steps);
+  });
+
   it("emits restart ready child spans without shortening the parent ready span", async () => {
     process.env.OPENCLAW_GATEWAY_RESTART_TRACE = "1";
 
