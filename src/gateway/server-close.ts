@@ -309,7 +309,9 @@ export async function prepareGatewayClose(
   shutdownLog.debug(`shutdown started: ${reason}`);
 
   try {
-    await shutdownStep("update-check", () => params.updateCheckStop?.(), warnings);
+    await measureCloseStep("update-check", () =>
+      shutdownStep("update-check", () => params.updateCheckStop?.(), warnings),
+    );
     await measureCloseStep("config-reloader", () =>
       shutdownStep("config-reloader", () => params.configReloader.stop(), warnings),
     );
@@ -417,7 +419,9 @@ export async function completeGatewayClose(
       );
     }
     if (params.bonjourStop) {
-      await shutdownStep("bonjour", () => params.bonjourStop!(), warnings);
+      await measureCloseStep("bonjour", () =>
+        shutdownStep("bonjour", () => params.bonjourStop!(), warnings),
+      );
     }
     // ACPX owns agent-process cleanup, so plugin teardown must not overtake
     // the manager drain even when cancellation and handle close are slow.
@@ -450,19 +454,27 @@ export async function completeGatewayClose(
         await shutdownStep(`channel/${channelId}`, () => params.stopChannel(channelId), warnings);
       }
     });
-    await shutdownStep("code-mode-runs", () => params.disposeAllCodeModeRuns(), warnings);
-    await disposeRuntimeWithShutdownGrace({
-      cleanupWork,
-      label: "agent-harnesses",
-      dispose: disposeRegisteredAgentHarnesses,
-      graceMs: AGENT_HARNESS_CLOSE_GRACE_MS,
-      warnings,
-    });
-    await shutdownStep("ai-session-resources", () => cleanupSessionResources(), warnings);
-    await shutdownStep(
-      "provider-transport-dispatchers",
-      () => params.closeProviderTransportDispatcherPool(),
-      warnings,
+    await measureCloseStep("code-mode-runs", () =>
+      shutdownStep("code-mode-runs", () => params.disposeAllCodeModeRuns(), warnings),
+    );
+    await measureCloseStep("agent-harnesses", () =>
+      disposeRuntimeWithShutdownGrace({
+        cleanupWork,
+        label: "agent-harnesses",
+        dispose: disposeRegisteredAgentHarnesses,
+        graceMs: AGENT_HARNESS_CLOSE_GRACE_MS,
+        warnings,
+      }),
+    );
+    await measureCloseStep("ai-session-resources", () =>
+      shutdownStep("ai-session-resources", () => cleanupSessionResources(), warnings),
+    );
+    await measureCloseStep("provider-transport-dispatchers", () =>
+      shutdownStep(
+        "provider-transport-dispatchers",
+        () => params.closeProviderTransportDispatcherPool(),
+        warnings,
+      ),
     );
     await measureCloseStep("bundle-runtimes", async () => {
       await Promise.all([
@@ -483,7 +495,9 @@ export async function completeGatewayClose(
       ]);
     });
     try {
-      mediaCleanupStopResult = await params.stopMediaCleanup();
+      mediaCleanupStopResult = await measureCloseStep("media-cleanup", () =>
+        params.stopMediaCleanup(),
+      );
     } catch (err) {
       shutdownLog.warn(`media-cleanup: ${err instanceof Error ? err.message : String(err)}`);
       recordShutdownWarning(warnings, "media-cleanup");
@@ -496,16 +510,22 @@ export async function completeGatewayClose(
     await measureCloseStep("gmail-watcher", () =>
       shutdownStep("gmail-watcher", () => params.stopGmailWatcher(), warnings),
     );
-    await shutdownStep(
-      "cron",
-      () => (params.cron.stopAndDrain ? params.cron.stopAndDrain() : params.cron.stop()),
-      warnings,
+    await measureCloseStep("cron", () =>
+      shutdownStep(
+        "cron",
+        () => (params.cron.stopAndDrain ? params.cron.stopAndDrain() : params.cron.stop()),
+        warnings,
+      ),
     );
-    await shutdownStep("heartbeat-runner", () => params.heartbeatRunner.stop(), warnings);
-    await shutdownStep(
-      "task-registry-maintenance",
-      () => params.stopTaskRegistryMaintenance?.(),
-      warnings,
+    await measureCloseStep("heartbeat-runner", () =>
+      shutdownStep("heartbeat-runner", () => params.heartbeatRunner.stop(), warnings),
+    );
+    await measureCloseStep("task-registry-maintenance", () =>
+      shutdownStep(
+        "task-registry-maintenance",
+        () => params.stopTaskRegistryMaintenance?.(),
+        warnings,
+      ),
     );
     for (const timer of params.nodePresenceTimers.values()) {
       clearInterval(timer);
@@ -519,19 +539,29 @@ export async function completeGatewayClose(
       params.maintenance.skillUsageCleanup();
     }
     if (params.agentUnsub) {
-      await shutdownStep("agent-unsub", () => params.agentUnsub!(), warnings);
+      await measureCloseStep("agent-unsub", () =>
+        shutdownStep("agent-unsub", () => params.agentUnsub!(), warnings),
+      );
     }
     if (params.heartbeatUnsub) {
-      await shutdownStep("heartbeat-unsub", () => params.heartbeatUnsub!(), warnings);
+      await measureCloseStep("heartbeat-unsub", () =>
+        shutdownStep("heartbeat-unsub", () => params.heartbeatUnsub!(), warnings),
+      );
     }
     if (params.transcriptUnsub) {
-      await shutdownStep("transcript-unsub", () => params.transcriptUnsub!(), warnings);
+      await measureCloseStep("transcript-unsub", () =>
+        shutdownStep("transcript-unsub", () => params.transcriptUnsub!(), warnings),
+      );
     }
     if (params.lifecycleUnsub) {
-      await shutdownStep("lifecycle-unsub", () => params.lifecycleUnsub!(), warnings);
+      await measureCloseStep("lifecycle-unsub", () =>
+        shutdownStep("lifecycle-unsub", () => params.lifecycleUnsub!(), warnings),
+      );
     }
     if (params.taskUnsub) {
-      await shutdownStep("task-unsub", () => params.taskUnsub!(), warnings);
+      await measureCloseStep("task-unsub", () =>
+        shutdownStep("task-unsub", () => params.taskUnsub!(), warnings),
+      );
     }
     params.chatRunState.clear();
     let clientCloseFailures = 0;
@@ -589,7 +619,7 @@ export async function completeGatewayClose(
     }
     // Node cleanup replies remain admissible until sockets close. Join their
     // uncancellable preparation before releasing the remaining process state.
-    await params.finishRequestEntries?.();
+    await measureCloseStep("request-entries", () => params.finishRequestEntries?.());
     clearSessionTypingState();
     const transportServers =
       params.httpServers && params.httpServers.length > 0
@@ -621,41 +651,51 @@ export async function completeGatewayClose(
       // The foreground Tailscale session owns the route, so closing its claim
       // releases the ephemeral backend before this lifecycle is forgotten.
       if (params.tailscaleCleanup) {
-        await shutdownStep("tailscale", () => params.tailscaleCleanup!(), warnings);
+        await measureCloseStep("tailscale", () =>
+          shutdownStep("tailscale", () => params.tailscaleCleanup!(), warnings),
+        );
       }
     }
-    await disposeRuntimeWithShutdownGrace({
-      cleanupWork,
-      label: "embedding-providers",
-      dispose: params.drainRetainedOpenAiEmbeddingProviders,
-      graceMs: EMBEDDING_PROVIDER_CLOSE_GRACE_MS,
-      warnings,
-    });
+    await measureCloseStep("embedding-providers", () =>
+      disposeRuntimeWithShutdownGrace({
+        cleanupWork,
+        label: "embedding-providers",
+        dispose: params.drainRetainedOpenAiEmbeddingProviders,
+        graceMs: EMBEDDING_PROVIDER_CLOSE_GRACE_MS,
+        warnings,
+      }),
+    );
   } catch (error) {
     closeFailure = { error };
   } finally {
     // Grace lets independent teardown advance; failed plugin cleanup still owns
     // shared state and must prevent a new Gateway lifecycle from starting.
-    await cleanupWork.drain();
-    await pluginServicesCleanup;
-    await params.finishRequestEntries?.();
-    await waitForMediaCleanupDrainsToSettle();
+    await measureCloseStep("cleanup-work-drain", () => cleanupWork.drain());
+    await measureCloseStep("plugin-services-cleanup", () => pluginServicesCleanup);
+    await measureCloseStep("request-entries-final", () => params.finishRequestEntries?.());
+    await measureCloseStep("media-cleanup-drains", () => waitForMediaCleanupDrainsToSettle());
     // Host cleanup can still use plugin state, and its own grace races must settle first.
-    await shutdownStep("plugin-host-registry", clearActivePluginRegistry, warnings);
+    await measureCloseStep("plugin-host-registry", () =>
+      shutdownStep("plugin-host-registry", clearActivePluginRegistry, warnings),
+    );
     try {
-      await params.closeSdkResources?.();
+      await measureCloseStep("sdk-resources", () => params.closeSdkResources?.());
     } catch (error) {
       resourceCleanupErrors.push(error);
     }
     if (mediaCleanupStopResult !== undefined) {
-      await shutdownStep("plugin-state-store", () => closePluginStateDatabase(), warnings);
+      await measureCloseStep("plugin-state-store", () =>
+        shutdownStep("plugin-state-store", () => closePluginStateDatabase(), warnings),
+      );
     }
     // Channel and plugin teardown still resolve account credentials. Keep the
     // active snapshot until every teardown owner is done, then always scrub it.
     try {
       // Plugin cleanup may still read ambient slots. A failed owner drain must
       // stop restart so the next lifecycle cannot reuse incomplete shutdown.
-      await drainGlobalSingletonLifecycleState(restartExpectedMs === null ? "close" : "restart");
+      await measureCloseStep("global-singletons", () =>
+        drainGlobalSingletonLifecycleState(restartExpectedMs === null ? "close" : "restart"),
+      );
     } catch (error) {
       resourceCleanupErrors.push(error);
     } finally {
