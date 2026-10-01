@@ -59,7 +59,8 @@ export function resolveStrandedReplyRecovery(params: {
       warn: classification === "substantive",
     };
   }
-  if (classification !== "substantive") {
+  // A short final is still the only reply the user would get, so it is re-prompted too.
+  if (classification === "none") {
     return { kind: "none" };
   }
   return {

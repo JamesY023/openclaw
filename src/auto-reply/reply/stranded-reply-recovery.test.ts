@@ -151,6 +151,26 @@ describe("resolveStrandedReplyRecovery", () => {
     }
   });
 
+  it("creates one retry for a short private final", () => {
+    const shortFinal = "Cancelled the reminder.";
+    const recovery = resolveStrandedReplyRecovery({
+      base: createMockFollowupRun({ prompt: "question" }),
+      payloads: [],
+      finalText: shortFinal,
+      sourceReplyDeliveryMode: "message_tool_only",
+      sendPolicyDenied: false,
+      successfulSourceReplyDelivery: false,
+      isHeartbeat: false,
+      isRoomEvent: false,
+    });
+
+    expect(recovery.kind).toBe("retry");
+    if (recovery.kind === "retry") {
+      expect(recovery.run.strandedReplyRetry).toBe(true);
+      expect(recovery.run.prompt).toContain(shortFinal);
+    }
+  });
+
   it("returns a diagnostic rather than a second retry", () => {
     const base = createMockFollowupRun({ prompt: "question", strandedReplyRetry: true });
 

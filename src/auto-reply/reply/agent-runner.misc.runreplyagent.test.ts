@@ -3337,16 +3337,18 @@ describe("runReplyAgent private message_tool_only final warning (#85714)", () =>
     expect(vi.mocked(enqueueFollowupRun).mock.calls[0]?.[6]).toEqual({ position: "front" });
   });
 
-  it("records a short private final without a message call as non-delivery", async () => {
+  it("records a short private final as non-delivery and re-prompts it once", async () => {
     const { terminalEvent } = await runPrivateFinalCase({
-      finalAssistantText: "Nothing to send here.",
+      finalAssistantText: "Cancelled the reminder.",
     });
     expect(terminalEvent?.data.terminalReply).toEqual({
       disposition: "empty",
       code: "message-tool-not-called",
     });
-    expect(warnPrivateFinalSpy).not.toHaveBeenCalled();
-    expect(vi.mocked(enqueueFollowupRun)).not.toHaveBeenCalled();
+    expect(vi.mocked(enqueueFollowupRun)).toHaveBeenCalledTimes(1);
+    const retryRun = vi.mocked(enqueueFollowupRun).mock.calls[0]?.[1];
+    expect(retryRun?.strandedReplyRetry).toBe(true);
+    expect(retryRun?.prompt).toContain("Cancelled the reminder.");
   });
 
   it("does not warn or enqueue retry when the message tool delivered this turn", async () => {
