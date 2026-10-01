@@ -5,6 +5,7 @@ import {
   isReplyPayloadTerminalContent,
   markReplyPayloadForSourceSuppressionDelivery,
 } from "../reply-payload.js";
+import { isSilentReplyText } from "../tokens.js";
 import type { ReplyPayload } from "../types.js";
 import {
   classifyPrivateMessageToolFinal,
@@ -53,14 +54,26 @@ export function resolveStrandedReplyRecovery(params: {
   }
   const classification = classifyPrivateMessageToolFinal(params);
   if (params.base.strandedReplyRetry === true) {
+    // NO_REPLY on the retry is the model choosing silence; an empty final still gets the notice.
+    if (isSilentReplyText(params.finalText.trim())) {
+      return { kind: "none" };
+    }
     return {
       kind: "diagnostic",
       payload: buildStrandedReplyDeliveryFailurePayload(),
       warn: classification === "substantive",
     };
   }
-  // A short final is still the only reply the user would get, so it is re-prompted too.
   if (classification === "none") {
+    return { kind: "none" };
+  }
+  // A short final is still the only reply a person would get, so it is re-prompted too.
+  // Internal and agent-to-agent turns (restart notices, handoffs) may end short and private on purpose.
+  const provenanceKind = params.base.run.inputProvenance?.kind;
+  if (
+    classification === "short" &&
+    (provenanceKind === "internal_system" || provenanceKind === "inter_session")
+  ) {
     return { kind: "none" };
   }
   return {
@@ -95,6 +108,8 @@ function buildStrandedReplyRetryFollowupRun(
     prompt: buildStrandedReplyRetryPrompt(params.finalText),
     summaryLine: STRANDED_REPLY_RETRY_MARKER,
     strandedReplyRetry: true,
+    // The retry only delivers the earlier text; it must not repeat any other action.
+    toolsAllow: ["message"],
     disableCollectBatching: true,
     transcriptPrompt: undefined,
     userTurnTranscriptRecorder: undefined,

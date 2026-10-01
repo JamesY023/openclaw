@@ -3349,6 +3349,7 @@ describe("runReplyAgent private message_tool_only final warning (#85714)", () =>
     const retryRun = vi.mocked(enqueueFollowupRun).mock.calls[0]?.[1];
     expect(retryRun?.strandedReplyRetry).toBe(true);
     expect(retryRun?.prompt).toContain("Cancelled the reminder.");
+    expect(retryRun?.toolsAllow).toEqual(["message"]);
   });
 
   it("does not warn or enqueue retry when the message tool delivered this turn", async () => {

@@ -177,7 +177,7 @@ describe("resolveStrandedReplyRecovery", () => {
     const recovery = resolveStrandedReplyRecovery({
       base,
       payloads: [],
-      finalText: "",
+      finalText: "Fulfilment IF98765 created.",
       sourceReplyDeliveryMode: "message_tool_only",
       sendPolicyDenied: false,
       successfulSourceReplyDelivery: false,
@@ -186,6 +186,86 @@ describe("resolveStrandedReplyRecovery", () => {
     });
 
     expect(recovery).toMatchObject({ kind: "diagnostic", warn: false });
+  });
+
+  it("limits the retry turn to the message tool", () => {
+    // Row "short after NS write" from the #6107 refute probe: the retry must only deliver.
+    const recovery = resolveStrandedReplyRecovery({
+      base: createMockFollowupRun({ prompt: "fulfil SO 4567" }),
+      payloads: [],
+      finalText: "Fulfilment IF98765 created for SO 4567.",
+      sourceReplyDeliveryMode: "message_tool_only",
+      sendPolicyDenied: false,
+      successfulSourceReplyDelivery: false,
+      isHeartbeat: false,
+      isRoomEvent: false,
+    });
+
+    expect(recovery.kind).toBe("retry");
+    if (recovery.kind === "retry") {
+      expect(recovery.run.toolsAllow).toEqual(["message"]);
+    }
+  });
+
+  it.each([
+    {
+      label: "internal system",
+      inputProvenance: { kind: "internal_system" as const, sourceTool: "restart-sentinel" },
+    },
+    {
+      label: "inter-session",
+      inputProvenance: { kind: "inter_session" as const, sourceTool: "subagent_announce" },
+    },
+  ])("does not re-prompt a short final from a $label turn", ({ inputProvenance }) => {
+    const recovery = resolveStrandedReplyRecovery({
+      base: createMockFollowupRun({ prompt: "restart notice", run: { inputProvenance } }),
+      payloads: [],
+      finalText: "Resumed.",
+      sourceReplyDeliveryMode: "message_tool_only",
+      sendPolicyDenied: false,
+      successfulSourceReplyDelivery: false,
+      isHeartbeat: false,
+      isRoomEvent: false,
+    });
+
+    expect(recovery).toEqual({ kind: "none" });
+  });
+
+  it.each([
+    "Acknowledgement could not be delivered due to a Telegram network error.",
+    "I’ll mark the emails I reviewed as read.",
+  ])("still re-prompts a short final from a person's message: %s", (finalText) => {
+    // Real Jessica mute finals, 2026-09-09 (runs 30968208, 8ee22647).
+    const recovery = resolveStrandedReplyRecovery({
+      base: createMockFollowupRun({
+        prompt: "question",
+        run: { inputProvenance: { kind: "external_user" } },
+      }),
+      payloads: [],
+      finalText,
+      sourceReplyDeliveryMode: "message_tool_only",
+      sendPolicyDenied: false,
+      successfulSourceReplyDelivery: false,
+      isHeartbeat: false,
+      isRoomEvent: false,
+    });
+
+    expect(recovery.kind).toBe("retry");
+  });
+
+  it("sends no notice when the retry turn chose silence with NO_REPLY", () => {
+    const recovery = resolveStrandedReplyRecovery({
+      base: createMockFollowupRun({ prompt: "question", strandedReplyRetry: true }),
+      payloads: [],
+      finalText: "NO_REPLY",
+      sourceReplyDeliveryMode: "message_tool_only",
+      sendPolicyDenied: false,
+      successfulSourceReplyDelivery: false,
+      isHeartbeat: false,
+      isRoomEvent: false,
+    });
+
+    expect(recovery).toEqual({ kind: "none" });
   });
 
   it.each([
