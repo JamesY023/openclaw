@@ -266,7 +266,9 @@ export async function resolveTelegramInboundBody(params: {
   const historyBody =
     rawBody || formattedStickerDescription || formatMediaPlaceholderText(nativeMediaFacts);
 
-  const mentionMessages = options?.bufferedMessages;
+  const mentionMessages = options?.bufferedMessages?.some((message) => message.contact)
+    ? options.bufferedMessages
+    : undefined;
   const mentionTextParts = mentionMessages
     ? joinTelegramTextParts(
         mentionMessages.filter((message) => !message.contact),

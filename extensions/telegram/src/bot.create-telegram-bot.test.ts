@@ -1315,6 +1315,40 @@ describe("createTelegramBot", () => {
     expect(payload.BodyForAgent).toContain("Total voters: 3");
   });
 
+  it("preserves a bot mention split across ordinary long-paste fragments", async () => {
+    loadConfig.mockReturnValue({
+      messages: { inbound: { debounceMs: 0 } },
+      channels: { telegram: { groupPolicy: "open", groups: { "*": { requireMention: true } } } },
+    });
+    const timerSpy = vi.spyOn(globalThis, "setTimeout");
+    const work: Promise<unknown>[] = [];
+    let flush: (() => void) | undefined;
+    try {
+      await createTelegramBot({ token: "tok" });
+      const handler = getMessageHandler();
+      const fragments = ["A".repeat(4090) + " @open", "claw_bot help"];
+      for (const [index, text] of fragments.entries()) {
+        const replay = await dispatchSpooledPrivateText(handler, {
+          updateId: 8300 + index,
+          messageId: 8300 + index,
+          text,
+          replayUpdate: "full",
+          message: { chat: { id: -1008300, type: "supergroup", title: "Long paste" } },
+        });
+        work.push(requireValue(replay.deferredWork, "long-paste participant").task);
+        flush = takeLatestTimerCallback(1_500);
+      }
+      requireValue(flush, "long-paste flush")();
+      await Promise.all(work);
+      expect(replySpy).toHaveBeenCalledOnce();
+      expect(replySpy.mock.calls[0]?.[0].RawBody).toBe(fragments.join(""));
+    } finally {
+      flush?.();
+      await Promise.allSettled(work);
+      timerSpy.mockRestore();
+    }
+  });
+
   it.each([false, true])(
     "keeps forwarded contact mentions separate from text (contactFirst=%s)",
     async (contactFirst) => {
