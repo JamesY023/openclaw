@@ -40,6 +40,7 @@ import type {
 import {
   buildSenderName,
   getTelegramTextParts,
+  joinTelegramTextParts,
   resolveTelegramNonTextBody,
   hasLeadingBotCommandAddressedToOtherBot,
   hasBotMentionInText,
@@ -264,12 +265,21 @@ export async function resolveTelegramInboundBody(params: {
   const historyBody =
     rawBody || formattedStickerDescription || formatMediaPlaceholderText(nativeMediaFacts);
 
-  const hasAnyMention = messageTextParts.entities.some((ent) => ent.type === "mention");
+  const mentionMessages = options?.bufferedMessages;
+  const mentionTextParts = mentionMessages
+    ? joinTelegramTextParts(
+        mentionMessages.filter((message) => !message.contact),
+        "\n",
+      )
+    : messageTextParts;
+  const hasAnyMention = mentionTextParts.entities.some((ent) => ent.type === "mention");
   const explicitlyMentioned = botUsername
-    ? hasBotMention(msg, botUsername, primaryCtx.me?.id) ||
+    ? (mentionMessages
+        ? mentionMessages.some((message) => hasBotMention(message, botUsername, primaryCtx.me?.id))
+        : hasBotMention(msg, botUsername, primaryCtx.me?.id)) ||
       (richText ? hasBotMentionInText(richText, botUsername) : false)
     : false;
-  const mentionText = msg.contact ? "" : messageTextParts.text;
+  const mentionText = mentionMessages || !msg.contact ? mentionTextParts.text : "";
   const groupThread = resolveGroupThreadMentionFacts({
     cfg,
     channel: "telegram",
