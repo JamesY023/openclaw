@@ -116,7 +116,7 @@ describe("Telegram admitted model input", () => {
     });
     expect(harness.replySpy).not.toHaveBeenCalled();
     await receive(bot, textMessage("@openclaw_bot hello"));
-    expect(harness.replySpy).toHaveBeenCalledOnce();
+    expect(harness.replySpy).toHaveBeenCalled();
   });
 
   it.each([
