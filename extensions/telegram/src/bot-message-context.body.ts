@@ -244,6 +244,7 @@ export async function resolveTelegramInboundBody(params: {
         OriginatingChannel: "telegram",
         OriginatingTo: originatingTo,
         AccountId: accountId,
+        ChatType: isGroup ? "group" : "direct",
         MessageThreadId: replyThreadId,
         media: materializedMedia,
       };
