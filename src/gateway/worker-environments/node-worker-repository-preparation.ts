@@ -7,7 +7,10 @@ import type {
   WorkerWorkspaceSyncResult,
 } from "./tunnel-contract.js";
 import { boundedWorkerError } from "./worker-error.js";
-import { workspaceSyncError } from "./workspace-sync-helpers.js";
+import {
+  workerWorkspaceCommandSucceeded as succeeded,
+  workspaceSyncError,
+} from "./workspace-sync-helpers.js";
 import { REMOTE_WORKSPACE_MANIFEST_JS } from "./workspace-sync-scripts.js";
 
 const GIT_TIMEOUT_MS = 60_000;
@@ -43,7 +46,7 @@ process.exitCode = result.status ?? 1;`;
 
 const BIND_PREPARED_REPOSITORY_JS = String.raw`const fs = require("node:fs");
 const { spawnSync } = require("node:child_process");
-const { origin, commit, branch, workspaceDir } = JSON.parse(fs.readFileSync(0, "utf8"));
+const { origin, commit, branch, workspaceDir, author } = JSON.parse(fs.readFileSync(0, "utf8"));
 if (fs.realpathSync(process.cwd()) !== fs.realpathSync(workspaceDir)) throw Error("Prepared repository workspace changed");
 const env = { ...process.env };
 for (const key of Object.keys(env)) if (/^(GIT_|GH_TOKEN$|GITHUB_TOKEN$)/i.test(key)) delete env[key];
@@ -65,6 +68,9 @@ if (current !== branch) {
   if (current !== undefined) throw Error("Prepared repository already belongs to another session branch");
   git(["checkout", "-b", branch, commit]);
 }
+for (const [key, value] of Object.entries(author ?? {})) {
+  if (value) git(["config", "--local", "user." + key, value]);
+}
 `;
 
 export type NodeWorkerRepositoryOutcome =
@@ -78,10 +84,6 @@ export type NodeWorkerRepositoryOutcome =
       reason: "clone-failed" | "checkout-failed" | "manifest-capture-failed" | "manifest-mismatch";
       detail?: string;
     };
-
-function succeeded(result: SpawnResult): boolean {
-  return result.termination === "exit" && result.code === 0;
-}
 
 function gitFailure(
   reason: "clone-failed" | "checkout-failed",
@@ -102,7 +104,21 @@ function gitFailure(
  * Admission owns the validated repository source; the command owner fences
  * every operation to its remote session workspace. This owner never reads a Gateway checkout.
  */
-export function createNodeWorkerRepositoryPreparation(exec: NodeWorkerRepositoryExec) {
+export function createNodeWorkerRepositoryPreparation(
+  run: NodeWorkerRepositoryExec,
+  authorize?: () => void,
+) {
+  // Invocation-owned preparation must not lend its authority to retained workspace custody.
+  const exec: NodeWorkerRepositoryExec = async (command) => {
+    authorize?.();
+    const assertCurrent = () => {
+      command.assertCurrent?.();
+      authorize?.();
+    };
+    const result = await run({ ...command, ...(authorize ? { assertCurrent } : {}) });
+    authorize?.();
+    return result;
+  };
   let seedStoreFailureLogged = false;
   const git = (
     identity: RepositoryIdentity | undefined,
@@ -192,12 +208,13 @@ export function createNodeWorkerRepositoryPreparation(exec: NodeWorkerRepository
     bindPreparedRepository: async (
       identity: RepositoryIdentity & { commit: string; branch: string },
       prepared: PreparedRepositoryWorkspace,
+      author?: { name?: string; email?: string },
     ): Promise<WorkerWorkspaceSyncResult & { mode: "repository" }> => {
       if (identity.commit !== prepared.baseCommit) {
         throw new Error("Prepared repository does not match the pinned session commit");
       }
-      // Binding changes only the session branch. It must never fetch, reset, or
-      // reseed the fixed workspace that already owns reusable build outputs.
+      // Bind the branch and author in one remote command without fetching,
+      // resetting, or reseeding the workspace that owns reusable build outputs.
       const bound = await exec({
         argv: ["node", "-e", BIND_PREPARED_REPOSITORY_JS],
         input: JSON.stringify({
@@ -205,6 +222,7 @@ export function createNodeWorkerRepositoryPreparation(exec: NodeWorkerRepository
           commit: identity.commit,
           branch: identity.branch,
           workspaceDir: prepared.workspaceDir,
+          author,
         }),
         timeoutMs: GIT_TIMEOUT_MS,
         transportRetry: "never",
@@ -220,8 +238,27 @@ export function createNodeWorkerRepositoryPreparation(exec: NodeWorkerRepository
         baseCommit: prepared.baseCommit,
       };
     },
-    configureAuthor: async (workspaceDir: string, author: { name?: string; email?: string }) => {
-      for (const [key, value] of Object.entries(author)) {
+    configureCheckout: async (
+      workspaceDir: string,
+      author: { name?: string; email?: string },
+      origin?: string,
+    ) => {
+      const settings: Record<string, string | undefined> = {
+        "user.name": author.name,
+        "user.email": author.email,
+      };
+      if (origin) {
+        // Retained checkouts own their origin after the initial materialization.
+        const remotes = await git(undefined, ["-C", workspaceDir, "remote"]);
+        if (!succeeded(remotes)) {
+          throw workspaceSyncError(remotes);
+        }
+        if (!remotes.stdout.split(/\r?\n/u).includes("origin")) {
+          settings["remote.origin.url"] = origin;
+          settings["remote.origin.fetch"] = "+refs/heads/*:refs/remotes/origin/*";
+        }
+      }
+      for (const [key, value] of Object.entries(settings)) {
         if (!value) {
           continue;
         }
@@ -230,7 +267,7 @@ export function createNodeWorkerRepositoryPreparation(exec: NodeWorkerRepository
           workspaceDir,
           "config",
           "--local",
-          `user.${key}`,
+          key,
           value,
         ]);
         if (!succeeded(configured)) {
@@ -258,37 +295,35 @@ export function createNodeWorkerRepositoryPreparation(exec: NodeWorkerRepository
     ): Promise<NodeWorkerRepositoryOutcome> {
       const seedKey = createHash("sha256").update(identity.origin).digest("hex");
       let outcome: NodeWorkerRepositoryOutcome | undefined;
-      {
-        try {
-          const applied = await exec({
-            argv: ["openclaw-internal-workspace-seed"],
-            seed: { action: "apply", key: seedKey },
-            timeoutMs: GIT_TIMEOUT_MS,
-            transportRetry: "never",
-          });
-          if (succeeded(applied) && applied.stdout.trim() === "applied") {
-            const remote = await git(identity, ["remote", "get-url", "origin"]);
-            if (!succeeded(remote) || remote.stdout.trim() !== identity.origin) {
-              throw new Error("Node workspace seed origin mismatch");
-            }
-            outcome = await checkoutAndCapture(
-              identity,
-              applied.workspaceDir,
-              expectedManifestRef,
-              true,
-            );
+      try {
+        const applied = await exec({
+          argv: ["openclaw-internal-workspace-seed"],
+          seed: { action: "apply", key: seedKey },
+          timeoutMs: GIT_TIMEOUT_MS,
+          transportRetry: "never",
+        });
+        if (succeeded(applied) && applied.stdout.trim() === "applied") {
+          const remote = await git(identity, ["remote", "get-url", "origin"]);
+          if (!succeeded(remote) || remote.stdout.trim() !== identity.origin) {
+            throw new Error("Node workspace seed origin mismatch");
           }
-        } catch (error) {
-          if (error instanceof Error && error.message.includes("INVALID_REQUEST")) {
-            throw error;
-          } else {
-            // Seeded failure self-heals through the clone path; without this line the
-            // degradation would be invisible behind an ordinary "published-origin" sync.
-            workspaceSyncLog.info("node worker workspace seeded sync failed; cloning", {
-              error: boundedWorkerError(error),
-            });
-          }
+          outcome = await checkoutAndCapture(
+            identity,
+            applied.workspaceDir,
+            expectedManifestRef,
+            true,
+          );
         }
+      } catch (error) {
+        authorize?.();
+        if (error instanceof Error && error.message.includes("INVALID_REQUEST")) {
+          throw error;
+        }
+        // Seeded failure self-heals through the clone path; without this line the
+        // degradation would be invisible behind an ordinary "published-origin" sync.
+        workspaceSyncLog.info("node worker workspace seeded sync failed; cloning", {
+          error: boundedWorkerError(error),
+        });
       }
       if (outcome?.kind !== "prepared") {
         const cloned = await git(
@@ -327,6 +362,7 @@ export function createNodeWorkerRepositoryPreparation(exec: NodeWorkerRepository
             throw workspaceSyncError(stored);
           }
         } catch (error) {
+          authorize?.();
           if (error instanceof Error && error.message.includes("INVALID_REQUEST")) {
             throw error;
           }

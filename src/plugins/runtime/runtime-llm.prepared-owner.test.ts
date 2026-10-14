@@ -7,6 +7,7 @@ import { getAiTransportHost } from "@openclaw/ai";
 import { expect, it, vi } from "vitest";
 import { createDeferred } from "../../../test/helpers/promise.js";
 import { resolveAgentDir } from "../../agents/agent-scope-config.js";
+import { prepareSharedAuthStoreOwnershipForNative } from "../../agents/auth-profiles/path-resolve.native.js";
 import {
   clearRuntimeAuthProfileStoreSnapshots,
   setRuntimeAuthProfileStoreSnapshot,
@@ -92,7 +93,7 @@ it.each([
       register(api) {
         const setup = globalThis[${JSON.stringify(setupKey)}];
         if (setup) {
-          const file = require("node:path").join(__dirname, "setup-" + (++setup.count) + ".sqlite");
+          const file = require("node:path").join(setup.stateDir, "setup-" + (++setup.count) + ".sqlite");
           const db = new (require("node:sqlite").DatabaseSync)(file);
           db.exec("CREATE TABLE observations (value INTEGER); INSERT INTO observations VALUES (42)");
           const record = { file, disposed: 0, read: () => db.prepare("SELECT value FROM observations").get().value, close: setup.deferred() };
@@ -145,6 +146,11 @@ it.each([
       } else {
         response.end(events.map((event) => `data: ${JSON.stringify(event)}\n\n`).join(""));
       }
+      return;
+    }
+    if (mode === "cancel-drain" && index === 0 && !finishing) {
+      // EOF can close the source before cancellation reaches its accepted work.
+      response.flushHeaders();
       return;
     }
     response.end(
@@ -232,7 +238,8 @@ it.each([
       OPENCLAW_STATE_DIR: path.join(root, "state"),
     };
     await withEnvAsync(env, async () => {
-      const create = vi.spyOn(ModelRegistry, "create");
+      prepareSharedAuthStoreOwnershipForNative();
+      const create = vi.spyOn(ModelRegistry, "fromCapturedSources");
       const fork = vi.spyOn(ModelRegistry.prototype, "fork");
       const setRuntimeKey = vi.spyOn(AuthStorage.prototype, "setRuntimeApiKey");
       const resolveModel = modelResolution.resolveModelAsync;
@@ -439,6 +446,7 @@ it.each([
           Object.defineProperty(globalThis, setupKey, {
             configurable: true,
             value: {
+              stateDir: root,
               count: 0,
               deferred: createDeferred,
               run: async (source: SetupRecord) => {
@@ -465,7 +473,7 @@ it.each([
                   if ("error" in acquired) {
                     throw new Error(acquired.error);
                   }
-                  acquired.release();
+                  pending.push(Promise.resolve(acquired[Symbol.asyncDispose]()));
                 })
               : sdk
                 ? host
@@ -886,7 +894,7 @@ it.each([
             const other = await acquireAgentRunPreparedModelRuntime(input(`churn-${index}`), {
               catalogMode: "static",
             });
-            other.release();
+            await other[Symbol.asyncDispose]();
           }
         }
         const buildsBeforeSecond = create.mock.calls.length;
@@ -945,7 +953,7 @@ it.each([
         for (const spy of transportSpies) {
           spy.mockRestore();
         }
-        retained?.release();
+        await retained?.[Symbol.asyncDispose]();
         create.mockRestore();
         fork.mockRestore();
         setRuntimeKey.mockRestore();

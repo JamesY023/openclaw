@@ -19,7 +19,9 @@ const suite = createControlUiE2eSuite({
   async startServer() {
     instance = await createOpenClawTestInstance({
       name: "shared-model-api-keys",
-      env: { OPENCLAW_TEST_MINIMAL_GATEWAY: undefined, VITEST: undefined },
+      reserveIdlePort: false,
+      env: { OPENCLAW_TEST_MINIMAL_GATEWAY: undefined, VITEST: undefined, NODE_ENV: undefined },
+      gatewayArgs: ["--verbose", "--ws-log", "full", "--log-level", "debug"],
       config: {
         gateway: { controlUi: { enabled: true } },
         agents: {
@@ -60,6 +62,15 @@ async function persistedAuth() {
   };
 }
 
+function authRefreshDiagnostics() {
+  return instance
+    .logs()
+    .split("\n")
+    .filter((line) => /models\.authRefresh|request dispatch failed/u.test(line))
+    .slice(-20)
+    .join("\n");
+}
+
 suite.define(() => {
   it("edits and removes a key with identical durable state through Models and CLI", async () => {
     const handoff = await instance.cli(["dashboard", "--json"]);
@@ -77,7 +88,7 @@ suite.define(() => {
           const card = page.locator('[data-provider-id="fixture"]');
           await card.waitFor();
           await page.screenshot({ path: path.join(suite.artifactDir, "before-edit.png") });
-          await card.getByRole("button", { name: "Replace key" }).click();
+          await card.getByRole("button", { name: "Set API key" }).click();
           await card.getByLabel("API key").fill(key);
           await card.getByRole("button", { name: "Save", exact: true }).click();
           await expect.poll(() => card.textContent()).toContain("Secret saved.");
@@ -126,7 +137,7 @@ suite.define(() => {
             stderr: pasted.stderr,
           });
           expect(pasted.status, pasted.stderr).toBe(0);
-          expect(pasted.stderr).not.toContain("could not refresh");
+          expect(pasted.stderr, authRefreshDiagnostics()).not.toContain("could not refresh");
           expect(await persistedAuth()).toEqual(saved);
           const logoutArgs = [
             "models",
@@ -137,6 +148,14 @@ suite.define(() => {
             "main",
             "--yes",
           ];
+          const refused = await instance.cli(logoutArgs);
+          observations.push({ action: "cli-remove-while-owned", args: logoutArgs, ...refused });
+          expect(refused.code, refused.stderr).toBe(1);
+          expect(refused.stderr).toContain("stop the Gateway");
+          expect(await persistedAuth()).toEqual(saved);
+
+          // CLI logout is offline-only; transfer custody after proving live-owner refusal.
+          await instance.stopGateway();
           const loggedOut = await instance.cli(logoutArgs);
           observations.push({
             action: "cli-remove",
@@ -146,8 +165,9 @@ suite.define(() => {
           });
           expect(loggedOut.code, loggedOut.stderr).toBe(0);
           expect(loggedOut.stdout).toContain("Removed auth profile");
-          expect(loggedOut.stderr).not.toContain("could not refresh");
+          expect(loggedOut.stderr, authRefreshDiagnostics()).not.toContain("could not refresh");
           expect(await persistedAuth()).toEqual(removed);
+          await instance.startGateway();
           await page.reload();
           await waitForControlUiGatewayReady(page);
           await expect

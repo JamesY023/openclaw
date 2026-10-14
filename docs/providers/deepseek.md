@@ -17,12 +17,14 @@ read_when:
 
 ## Install plugin
 
-Install the official plugin, then restart Gateway:
+Install the official plugin:
 
 ```bash
 openclaw plugins install @openclaw/deepseek-provider
-openclaw gateway restart
 ```
+
+Installation applies to a running Gateway automatically; otherwise it takes effect
+on the next startup. See [Apply changes and inspect](/plugins/manage-plugins#apply-changes-and-inspect).
 
 ## Getting started
 
@@ -116,6 +118,14 @@ maximum `reasoning_effort`; both map to `"max"`.
 </Tip>
 
 ## Thinking and tools
+
+When a DeepSeek-format endpoint emits DSML tool markup as text, OpenClaw recovers
+valid `calls`, `tool_calls`, `tool_call`, and `function_calls` blocks into tool
+calls instead of showing their payloads in chat. This includes doubled fullwidth
+markers with a separator space. Direct provider calls and tool-free finalization
+hide these blocks without recovering tools. Malformed or unfinished blocks are
+also hidden without executing them; existing tool permissions still apply to
+recovered calls.
 
 DeepSeek V4 thinking sessions require replayed assistant messages from a
 thinking-enabled turn to include `reasoning_content` on follow-up requests.

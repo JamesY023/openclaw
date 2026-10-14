@@ -5,9 +5,11 @@ import {
   closeSlot,
   ensureSidebarConversation,
   fitSidebarLayout,
+  initializeBrowserSidebarWidth,
   isSidebarSlotVisible,
   normalizeSidebarLayout,
   openSlot,
+  presentNarrowSidebarLayout,
   promoteSidebarPanel,
   reorderPanel,
   resizeSidebarPanel,
@@ -73,6 +75,77 @@ describe("sidebar layout", () => {
     expect(layout.expandedSide).toBeUndefined();
   });
 
+  it("shows a narrow pane's open background panel in place of the main view, and nothing else", () => {
+    const saved = openSlot(openSlot({ columns: [] }, "terminal"), "subagents");
+    const before = structuredClone(saved);
+    const shown = presentNarrowSidebarLayout(saved);
+    expect(isSidebarSlotVisible(shown, "subagents")).toBe(true);
+    expect(isSidebarSlotVisible(shown, "conversation")).toBe(false);
+    // Presentation only: the layout is untouched and the same view comes back each time.
+    expect(saved).toEqual(before);
+    expect(presentNarrowSidebarLayout(saved)).toBe(shown);
+    expect(
+      isSidebarSlotVisible(
+        presentNarrowSidebarLayout(openSlot(saved, "processes")),
+        "conversation",
+      ),
+    ).toBe(false);
+    // Every other state is shown as it is: another panel, a closed side, a focused main view.
+    for (const layout of [
+      openSlot(saved, "terminal"),
+      setSidebarOpen(saved, false),
+      setSidebarExpanded(saved, true),
+      toggleSidebarPanelExpanded(saved, sidebarActivePanel(saved)!.id),
+    ]) {
+      expect(presentNarrowSidebarLayout(layout)).toBe(layout);
+    }
+  });
+
+  it("presents every open mobile panel full-width without changing the saved desktop layout", () => {
+    for (const slot of [
+      "workspace",
+      "terminal",
+      "browser",
+      "dashboard",
+      "subagents",
+      "processes",
+    ] as const) {
+      const saved = openSlot(ensureSidebarConversation({ columns: [] }), slot);
+      const before = structuredClone(saved);
+      const shown = presentNarrowSidebarLayout(saved, { allPanels: true });
+      expect(isSidebarSlotVisible(shown, slot)).toBe(true);
+      expect(isSidebarSlotVisible(shown, "conversation")).toBe(false);
+      expect(presentNarrowSidebarLayout(saved, { allPanels: true })).toBe(shown);
+      expect(saved).toEqual(before);
+      expect(isSidebarSlotVisible(saved, "conversation")).toBe(true);
+      const closed = setSidebarOpen(saved, false);
+      expect(presentNarrowSidebarLayout(closed, { allPanels: true })).toBe(closed);
+    }
+  });
+
+  it("keeps a promoted main view visible when restoring a mobile split", () => {
+    const split = ensureSidebarConversation(openSlot({ columns: [] }, "dashboard"));
+    const promoted = promoteSidebarPanel(split, sidebarActivePanel(split)!.id);
+    expect(sidebarMainPanel(promoted)?.slot).toBe("dashboard");
+    expect(presentNarrowSidebarLayout(promoted, { allPanels: true })).toBe(promoted);
+    expect(isSidebarSlotVisible(promoted, "dashboard")).toBe(true);
+    expect(isSidebarSlotVisible(promoted, "conversation")).toBe(true);
+  });
+
+  it("presents newly selected mobile tools over a promoted main view without changing it", () => {
+    const split = ensureSidebarConversation(openSlot({ columns: [] }, "dashboard"));
+    const promoted = promoteSidebarPanel(split, sidebarActivePanel(split)!.id);
+    for (const slot of ["workspace", "terminal"] as const) {
+      const saved = openSlot(promoted, slot);
+      const before = structuredClone(saved);
+      const shown = presentNarrowSidebarLayout(saved, { allPanels: true });
+      expect(isSidebarSlotVisible(shown, slot)).toBe(true);
+      expect(isSidebarSlotVisible(shown, "dashboard")).toBe(false);
+      expect(sidebarMainPanel(shown)?.slot).toBe("dashboard");
+      expect(saved).toEqual(before);
+    }
+  });
+
   it("opens every slot as a tab in one right-side column", () => {
     const layout = openAll();
     expect(layout.columns).toHaveLength(1);
@@ -130,6 +203,7 @@ describe("sidebar layout", () => {
     expect(closed).toEqual({
       columns: [
         {
+          browserWidthPending: true,
           id: "side-panel-column",
           side: "right",
           panels: [],
@@ -272,6 +346,35 @@ describe("sidebar layout", () => {
       fitSidebarLayout(resizeSidebarPanel(layout, columnId, 1_000), 1_200)?.columns[0]?.width,
     ).toBe(720);
     expect(fitSidebarLayout(layout, 560)).toBeNull();
+  });
+
+  it.each([
+    [1_800, 804, 990],
+    [1_400, 804, 694],
+    [1_000, 964, 494],
+    [800, 600, 480],
+    [2_800, 804, 1_200],
+  ])("sizes a new browser in a %ipx pane around the chat column", (paneWidth, chatWidth, width) => {
+    const layout = openSlot({ columns: [] }, "browser");
+    const opened = initializeBrowserSidebarWidth(layout, paneWidth, chatWidth);
+    expect(opened.columns[0]?.width).toBe(width);
+    expect(initializeBrowserSidebarWidth(opened, 2_000, 600)).toEqual(opened);
+  });
+
+  it("defers browser sizing in narrow and bottom layouts and preserves manual or legacy widths", () => {
+    const layout = normalizeSidebarLayout(openSlot({ columns: [] }, "browser"));
+    expect(initializeBrowserSidebarWidth(layout, 500, 464)).toEqual(layout);
+    const bottom = setSidebarDock(layout, "bottom");
+    expect(initializeBrowserSidebarWidth(bottom, 1_800, 804)).toEqual(bottom);
+    const resized = normalizeSidebarLayout(resizeSidebarPanel(layout, layout.columns[0]!.id, 480));
+    expect(initializeBrowserSidebarWidth(resized, 1_800, 804)).toEqual(resized);
+    const legacy = normalizeSidebarLayout({
+      columns: [
+        { id: "side", side: "right", panels: [{ id: "browser", slot: "browser" }], width: 480 },
+      ],
+    });
+    expect(initializeBrowserSidebarWidth(legacy, 1_800, 804)).toEqual(legacy);
+    expect(initializeBrowserSidebarWidth(layout, 1_800, 804).columns[0]?.width).toBe(990);
   });
 
   it("persists and resizes the same panel at the bottom", () => {

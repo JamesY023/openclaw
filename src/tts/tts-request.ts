@@ -4,19 +4,20 @@ import {
   resolvePluginCapabilityProvider,
   resolvePluginCapabilityProviders,
 } from "../plugins/capability-provider-runtime.js";
+import { createLegacyPluginSdkProviderProjection } from "../plugins/legacy-sdk-provider-projection.js";
 import { getLegacyPluginSdkResourceHost } from "../plugins/legacy-sdk-resource-host.js";
-import { getPluginRegistryInspectionResources } from "../plugins/registry-inspection-resources.js";
-import type { PluginRegistry } from "../plugins/registry-types.js";
+import { warnPluginSdkDeprecation } from "../plugins/sdk-deprecation.js";
 import { parseTtsDirectives } from "./directives.js";
 import { createSpeechProviderRegistry } from "./provider-registry-core.js";
 import { canonicalizeSpeechProviderId, getSpeechProvider } from "./provider-registry.js";
-import type {
-  SpeechProviderOverrides,
-  TtsDirectiveOverrides,
-  TtsDirectiveParseResult,
-} from "./provider-types.js";
-import { resolveTtsProvider } from "./tts-provider-resolution.js";
-import { resolveTtsConfig, resolveTtsPrefsPath, resolveTtsRuntimeConfig } from "./tts-settings.js";
+import type { TtsDirectiveOverrides, TtsDirectiveParseResult } from "./provider-types.js";
+import { resolveTtsProvider, resolveTtsProviderAsync } from "./tts-provider-resolution.js";
+import {
+  resolveTtsConfig,
+  resolveTtsPrefsPath,
+  resolveTtsPrefsPathAsync,
+  resolveTtsRuntimeConfig,
+} from "./tts-settings.js";
 
 type PreparedTtsRequest = {
   cfg: OpenClawConfig;
@@ -30,18 +31,13 @@ export async function prepareTtsRequest(params: {
   text: string;
 }): Promise<PreparedTtsRequest> {
   const host = getLegacyPluginSdkResourceHost();
-  return await host.track(() => {
-    const retained = new Set<
-      NonNullable<ReturnType<typeof getPluginRegistryInspectionResources>>
-    >();
-    const retain = (registry: PluginRegistry | undefined) => {
-      host.assertOpen();
-      const source = registry && getPluginRegistryInspectionResources(registry);
-      if (source && !retained.has(source)) {
-        // Failed projections can also leave tracked work using this registration.
-        host.adopt(source, source.retain());
-        retained.add(source);
-      }
+  return await host.track(async () => {
+    using projection = createLegacyPluginSdkProviderProjection();
+    const retain = (registry: Parameters<typeof projection.select>[0]) => {
+      const project = projection.select(registry);
+      // Failed directive projections can leave tails; the host owns them before metadata runs.
+      projection.adopt();
+      return project;
     };
     const registry = createSpeechProviderRegistry({
       getProvider: (providerId, cfg) =>
@@ -62,14 +58,18 @@ export async function prepareTtsRequest(params: {
         return registry.listSpeechProviders(cfg);
       },
       providerConfigs: config.providerConfigs,
-      preferredProviderId: resolveTtsProvider(config, resolveTtsPrefsPath(config), registry),
+      preferredProviderId: await resolveTtsProviderAsync(
+        config,
+        await resolveTtsPrefsPathAsync(config),
+        registry,
+      ),
     });
     host.assertOpen();
     return { cfg, directives };
   });
 }
 
-export function resolveExplicitTtsOverrides(params: {
+type ExplicitTtsOverrideParams = {
   cfg: OpenClawConfig;
   prefsPath?: string;
   provider?: string;
@@ -78,7 +78,9 @@ export function resolveExplicitTtsOverrides(params: {
   agentId?: string;
   channelId?: string;
   accountId?: string;
-}): TtsDirectiveOverrides {
+};
+
+function prepareExplicitTtsOverrides(params: ExplicitTtsOverrideParams) {
   const cfg = resolveTtsRuntimeConfig(params.cfg);
   const providerInput = params.provider?.trim();
   const modelId = params.modelId?.trim();
@@ -88,11 +90,43 @@ export function resolveExplicitTtsOverrides(params: {
     channelId: params.channelId,
     accountId: params.accountId,
   });
+  return { cfg, providerInput, modelId, voiceId, config };
+}
+
+/** @deprecated Use resolveExplicitTtsOverridesAsync. Removed at the next Plugin SDK major. */
+export function resolveExplicitTtsOverrides(
+  params: ExplicitTtsOverrideParams,
+): TtsDirectiveOverrides {
+  warnPluginSdkDeprecation({
+    family: "tts",
+    method: "resolveExplicitTtsOverrides",
+    replacement: "resolveExplicitTtsOverridesAsync",
+  });
+  const prepared = prepareExplicitTtsOverrides(params);
+  const { cfg, providerInput, modelId, voiceId, config } = prepared;
   const prefsPath = params.prefsPath ?? resolveTtsPrefsPath(config);
   const selectedProvider =
     canonicalizeSpeechProviderId(providerInput, cfg) ??
     (modelId || voiceId ? resolveTtsProvider(config, prefsPath) : undefined);
+  return resolveExplicitTtsOverridesForProvider(prepared, selectedProvider);
+}
 
+export async function resolveExplicitTtsOverridesAsync(
+  params: ExplicitTtsOverrideParams,
+): Promise<TtsDirectiveOverrides> {
+  const prepared = prepareExplicitTtsOverrides(params);
+  const { cfg, providerInput, modelId, voiceId, config } = prepared;
+  const prefsPath = params.prefsPath ?? (await resolveTtsPrefsPathAsync(config));
+  const selectedProvider =
+    canonicalizeSpeechProviderId(providerInput, cfg) ??
+    (modelId || voiceId ? await resolveTtsProviderAsync(config, prefsPath) : undefined);
+  return resolveExplicitTtsOverridesForProvider(prepared, selectedProvider);
+}
+
+function resolveExplicitTtsOverridesForProvider(
+  { cfg, providerInput, modelId, voiceId }: ReturnType<typeof prepareExplicitTtsOverrides>,
+  selectedProvider: string | undefined,
+): TtsDirectiveOverrides {
   if (providerInput && !selectedProvider) {
     throw new Error(`Unknown TTS provider "${providerInput}".`);
   }
@@ -122,17 +156,16 @@ export function resolveExplicitTtsOverrides(params: {
       ...(modelId ? { modelId } : {}),
     },
   });
-  if ((voiceId || modelId) && (!providerOverrides || Object.keys(providerOverrides).length === 0)) {
+  if (!providerOverrides || Object.keys(providerOverrides).length === 0) {
     throw new Error(
       `TTS provider "${selectedProvider}" ignored the requested model or voice overrides.`,
     );
   }
 
-  const overridesRecord = providerOverrides as SpeechProviderOverrides;
   return {
     provider: selectedProvider,
     providerOverrides: {
-      [provider.id]: overridesRecord,
+      [provider.id]: providerOverrides,
     },
   };
 }
