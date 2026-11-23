@@ -2633,6 +2633,28 @@ describe("OpenAI-compatible HTTP API (e2e)", () => {
       resultTexts: ["First.", "Complete final."],
     },
     {
+      name: "leading native whitespace before a completion-only final",
+      events: [{ itemId: "partial", text: "\nFirst.", delta: "\nFirst." }],
+      expected: "\nFirst.\n\nComplete final.",
+      resultTexts: ["First.", "Complete final."],
+    },
+    {
+      name: "trimmed stable items before the rest of a final",
+      events: [
+        { itemId: "first", text: "\nFirst. \n", delta: "\nFirst. \n" },
+        { itemId: "second", text: "\nSecond.\n", delta: "\nSecond.\n" },
+        { itemId: "final", text: " Complete ", delta: " Complete " },
+      ],
+      expected: "\nFirst. \n\nSecond.\n\n Complete final.",
+      resultTexts: ["First.", "Second.", "Complete final."],
+    },
+    {
+      name: "trailing native whitespace before a completion-only final",
+      events: [{ itemId: "partial", text: "First. \n", delta: "First. \n" }],
+      expected: "First. \n\nComplete final.",
+      resultTexts: ["First.", "Complete final."],
+    },
+    {
       name: "emitted text when a result would replace an ordinary streamed prefix",
       events: [{ itemId: "answer", text: "Already streamed.", delta: "Already streamed." }],
       expected: "Already streamed.",

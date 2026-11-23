@@ -14,6 +14,7 @@ export type AssistantTextSnapshot = {
   scope?: {
     itemId: string;
     prefix: string;
+    settledPrefix?: string;
     boundaryNewlines: number;
     separatorLength: number;
   };
@@ -31,6 +32,20 @@ export function resolveAssistantResultText(result: unknown): string | undefined 
   return texts.length > 0 ? texts.filter(Boolean).join("\n\n") : undefined;
 }
 
+function settledItemPrefix(
+  { text, scope }: AssistantTextSnapshot,
+  trimEnd: boolean,
+): string | undefined {
+  if (scope?.settledPrefix === undefined) {
+    return undefined;
+  }
+  const item = text.slice(scope.prefix.length + scope.separatorLength);
+  const settledItem = trimEnd ? item.trim() : item.trimStart();
+  return settledItem && scope.settledPrefix
+    ? scope.settledPrefix + "\n\n" + settledItem
+    : scope.settledPrefix || settledItem;
+}
+
 /** Settled output can extend an ordinary stream and cannot replace its emitted prefix. */
 export function resolveAssistantTextCompletion(params: {
   assistantText: AssistantTextSnapshot;
@@ -45,9 +60,24 @@ export function resolveAssistantTextCompletion(params: {
     );
   }
   if (params.streamedText) {
-    return params.resultText?.startsWith(params.assistantText.text)
-      ? params.resultText
-      : params.assistantText.text;
+    const { assistantText, resultText } = params;
+    const wire = assistantText.text;
+    if (resultText?.startsWith(wire)) {
+      return resultText;
+    }
+    // Native results trim each item independently. Compare in that projection,
+    // then extend the original wire text so emitted whitespace stays intact.
+    const growingItem = settledItemPrefix(assistantText, false);
+    if (growingItem && resultText?.startsWith(growingItem)) {
+      return wire + resultText.slice(growingItem.length);
+    }
+    const settledItem = settledItemPrefix(assistantText, true);
+    if (settledItem && resultText?.startsWith(settledItem + "\n\n")) {
+      // Already-emitted trailing newlines can supply the next item boundary.
+      const separatorOnWire = wire.endsWith("\n\n") ? 2 : wire.endsWith("\n") ? 1 : 0;
+      return wire + resultText.slice(settledItem.length + separatorOnWire);
+    }
+    return wire;
   }
   return (params.resultText ?? params.assistantText.text) || params.fallbackText;
 }
@@ -101,6 +131,9 @@ export function mergeAssistantText(
     scope = {
       itemId: input.itemId,
       prefix,
+      ...(unkeyed === "append-only" && {
+        settledPrefix: prefix ? settledItemPrefix(previous, true) : "",
+      }),
       boundaryNewlines: !prefix || prefix.endsWith("\n\n") ? 0 : prefix.endsWith("\n") ? 1 : 2,
       separatorLength: 0,
     };
