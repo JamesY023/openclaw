@@ -787,6 +787,65 @@ describe("CodexAppServerEventProjector assistant projection", () => {
     ]);
   });
 
+  it.each([false, true])(
+    "retains a Codex partial_answer before the final answer (native handoff: %s)",
+    async (handoff) => {
+      const onAgentEvent = vi.fn();
+      const onPartialReply = vi.fn();
+      const projector = await createProjector({
+        ...(await createParams()),
+        onAgentEvent,
+        onPartialReply,
+      });
+      const partial = "The first result is ready.";
+      const final = "The second result is ready.";
+
+      await projector.handleNotification(
+        forCurrentTurn("item/started", {
+          item: { type: "agentMessage", id: "partial", phase: "partial_answer", text: "" },
+        }),
+      );
+      await projector.handleNotification(agentMessageDelta(partial, "partial"));
+      await projector.handleNotification(
+        forCurrentTurn("item/completed", {
+          item: { type: "agentMessage", id: "partial", phase: "partial_answer", text: partial },
+        }),
+      );
+      if (handoff) {
+        const work = { type: "sleep", id: "work", durationMs: 1 };
+        await projector.handleNotification(forCurrentTurn("item/started", { item: work }));
+        await projector.handleNotification(forCurrentTurn("item/completed", { item: work }));
+      }
+      await projector.handleNotification(
+        forCurrentTurn("item/started", {
+          item: { type: "agentMessage", id: "final", phase: "final_answer", text: "" },
+        }),
+      );
+      await projector.handleNotification(agentMessageDelta(final, "final"));
+      await projector.handleNotification(
+        forCurrentTurn("item/completed", {
+          item: { type: "agentMessage", id: "final", phase: "final_answer", text: final },
+        }),
+      );
+      await projector.handleNotification(
+        turnCompleted([{ type: "agentMessage", id: "final", phase: "final_answer", text: final }]),
+      );
+
+      const result = projector.buildResult(buildEmptyToolTelemetry());
+      expect(result.assistantTexts).toEqual([partial, final]);
+      expect(
+        onAgentEvent.mock.calls
+          .map((call) => call[0])
+          .filter((event) => event.stream === "assistant")
+          .map((event) => [event.data.itemId, event.data.text, event.data.replaceable]),
+      ).toEqual([
+        ["partial", partial, undefined],
+        ["final", final, undefined],
+      ]);
+      expect(onPartialReply.mock.calls.map((call) => call[0].text)).toEqual([partial, final]);
+    },
+  );
+
   it("streams final-answer assistant deltas into partial replies", async () => {
     const onAgentEvent = vi.fn();
     const onPartialReply = vi.fn();

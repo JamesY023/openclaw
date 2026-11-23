@@ -50,6 +50,9 @@ export class CodexAssistantProjection {
   // invalidation has to be recorded from the first item notification for each
   // native or dynamic handoff, or a later coda would revive every pre-tool final.
   private persistableAssistantBarrier = 0;
+  // Codex >=0.164 partial_answer text is stable: it survives native work, but not
+  // an answer already mirrored to the transcript before a steer.
+  private persistedAssistantBarrier = 0;
   // A completed answer mirrored before a steer is already durable. Do not
   // replay it as the enclosing turn's terminal answer if Codex emits no coda.
   private persistedAssistantBoundary = false;
@@ -103,18 +106,19 @@ export class CodexAssistantProjection {
       return;
     }
     const knownFinalAnswer = this.isFinalAnswerAssistantItem(itemId);
+    const knownStableAnswer = knownFinalAnswer || this.isPartialAnswerAssistantItem(itemId);
     if (knownFinalAnswer) {
       this.emitAnswerCandidate(itemId, "candidate");
     }
     const replace =
       this.streamedPartialAssistantItemId !== undefined &&
       this.streamedPartialAssistantItemId !== itemId;
-    // Codex defines final_answer as terminal text. Replacement mode is for
+    // Codex partial_answer and final_answer text is stable. Replacement mode is for
     // phase-unknown/provisional items; append-only consumers cannot retract bytes.
-    if (replace && (!knownFinalAnswer || this.streamedPartialAssistantItemReplaceable)) {
+    if (replace && (!knownStableAnswer || this.streamedPartialAssistantItemReplaceable)) {
       this.streamedPartialAssistantItemReplaceable = true;
     } else if (this.streamedPartialAssistantItemId === undefined) {
-      this.streamedPartialAssistantItemReplaceable = !knownFinalAnswer;
+      this.streamedPartialAssistantItemReplaceable = !knownStableAnswer;
     }
     this.streamedPartialAssistantItemId = itemId;
     const replaceable = this.streamedPartialAssistantItemReplaceable;
@@ -134,7 +138,7 @@ export class CodexAssistantProjection {
     });
     // Legacy channel preview callbacks are append-oriented and do not all
     // understand replacement snapshots.
-    if (knownFinalAnswer && !replaceable) {
+    if (knownStableAnswer && !replaceable) {
       await this.params.onPartialReply?.(streamPayload);
     }
   }
@@ -392,6 +396,7 @@ export class CodexAssistantProjection {
     const index = this.assistantItemOrder.indexOf(itemId);
     if (index >= 0) {
       this.persistableAssistantBarrier = Math.max(this.persistableAssistantBarrier, index + 1);
+      this.persistedAssistantBarrier = Math.max(this.persistedAssistantBarrier, index + 1);
       this.persistedAssistantBoundary = true;
     }
   }
@@ -506,6 +511,10 @@ export class CodexAssistantProjection {
 
   private isFinalAnswerAssistantItem(itemId: string): boolean {
     return this.assistantPhaseByItem.get(itemId) === "final_answer";
+  }
+
+  private isPartialAnswerAssistantItem(itemId: string): boolean {
+    return this.assistantPhaseByItem.get(itemId) === "partial_answer";
   }
 
   private emitCommentaryProgress(params: {
@@ -626,12 +635,19 @@ export class CodexAssistantProjection {
   private collectPersistableAssistantTexts(minIndex: number): string[] {
     let texts: string[] = [];
     let replaceable = false;
-    // Walk time order. Unphased text replaces the current segment. Explicit
-    // finals accumulate unless they follow a replacement. Silent payloads
-    // never replace; they only ride along for post-handoff identity.
-    for (let index = minIndex; index < this.assistantItemOrder.length; index += 1) {
+    // Walk time order. Unphased text replaces the current segment. Stable partial
+    // and final answers accumulate unless they follow a replacement. A partial
+    // answer survives native work and is cut only at the persisted boundary.
+    // Silent payloads never replace; they only ride along for post-handoff identity.
+    for (let index = 0; index < this.assistantItemOrder.length; index += 1) {
       const itemId = this.assistantItemOrder[index];
       if (!itemId || this.isNonTerminalAssistantItem(itemId)) {
+        continue;
+      }
+      const cutoff = this.isPartialAnswerAssistantItem(itemId)
+        ? this.persistedAssistantBarrier
+        : minIndex;
+      if (index < cutoff) {
         continue;
       }
       const text = this.assistantTextByItem.get(itemId)?.trim();
@@ -642,10 +658,11 @@ export class CodexAssistantProjection {
         texts.push(text);
         continue;
       }
-      const isTerminalFinal = this.assistantPhaseByItem.get(itemId) === "final_answer";
-      if (!isTerminalFinal || replaceable) {
+      const isStableAnswer =
+        this.isFinalAnswerAssistantItem(itemId) || this.isPartialAnswerAssistantItem(itemId);
+      if (!isStableAnswer || replaceable) {
         texts = [text];
-        replaceable = !isTerminalFinal;
+        replaceable = !isStableAnswer;
         continue;
       }
       texts.push(text);

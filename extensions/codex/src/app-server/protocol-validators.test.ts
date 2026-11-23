@@ -169,6 +169,22 @@ describe("readCodexTurn", () => {
     });
   });
 
+  it("accepts the partial_answer agent-message phase of the managed Codex version", () => {
+    const turn = readCodexTurn({
+      id: "turn-1",
+      status: "completed",
+      items: [
+        { id: "message-1", type: "agentMessage", phase: "partial_answer", text: "first" },
+        { id: "message-2", type: "agentMessage", phase: "final_answer", text: "second" },
+      ],
+    });
+
+    expect(turn?.items.map((item) => (item as { phase?: string }).phase)).toEqual([
+      "partial_answer",
+      "final_answer",
+    ]);
+  });
+
   it("does not merge defaults from unrelated thread item union branches", () => {
     const turn = readCodexTurn({
       id: "turn-1",
@@ -176,7 +192,15 @@ describe("readCodexTurn", () => {
       items: [{ id: "item-1", type: "plan", text: "ship it" }],
     });
 
-    expect(turn?.items[0]).toEqual({ id: "item-1", type: "plan", text: "ship it" });
+    // Codex >=0.169 gives every ThreadItem shared lifecycle times (default null);
+    // branch-specific defaults such as agentMessage.delivery must still not leak in.
+    expect(turn?.items[0]).toEqual({
+      id: "item-1",
+      type: "plan",
+      text: "ship it",
+      startedAtMs: null,
+      completedAtMs: null,
+    });
   });
 
   it("accepts nullable arrays in generated dynamic tool call items", () => {
