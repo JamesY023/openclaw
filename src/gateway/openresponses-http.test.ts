@@ -461,6 +461,27 @@ describe("OpenResponses HTTP API (e2e)", () => {
       resultTexts: ["Echo", "Echo"],
     },
     {
+      name: "a completion-only final after a streamed partial",
+      events: [{ itemId: "partial", text: "First.", delta: "First." }],
+      expected: "First.\n\nComplete final.",
+      resultTexts: ["First.", "Complete final."],
+    },
+    {
+      name: "the completed tail of a partially streamed final",
+      events: [
+        { itemId: "partial", text: "First.", delta: "First." },
+        { itemId: "final", text: "Complete", delta: "Complete" },
+      ],
+      expected: "First.\n\nComplete final.",
+      resultTexts: ["First.", "Complete final."],
+    },
+    {
+      name: "emitted text when a result would replace an ordinary streamed prefix",
+      events: [{ itemId: "answer", text: "Already streamed.", delta: "Already streamed." }],
+      expected: "Already streamed.",
+      resultTexts: ["Separate result."],
+    },
+    {
       name: "replayed and growing snapshots across assistant items",
       events: [
         { itemId: "answer-1", text: "Echo", delta: "Echo" },

@@ -31,7 +31,7 @@ export function resolveAssistantResultText(result: unknown): string | undefined 
   return texts.length > 0 ? texts.filter(Boolean).join("\n\n") : undefined;
 }
 
-/** Settled provisional output is run-wide; ordinary item streams keep their wire projection. */
+/** Settled output can extend an ordinary stream and cannot replace its emitted prefix. */
 export function resolveAssistantTextCompletion(params: {
   assistantText: AssistantTextSnapshot;
   pending?: AssistantTextSnapshot;
@@ -44,9 +44,12 @@ export function resolveAssistantTextCompletion(params: {
       params.resultText ?? (params.pending.text || (params.streamedText ? "" : params.fallbackText))
     );
   }
-  return params.streamedText
-    ? params.assistantText.text
-    : (params.resultText ?? params.assistantText.text) || params.fallbackText;
+  if (params.streamedText) {
+    return params.resultText?.startsWith(params.assistantText.text)
+      ? params.resultText
+      : params.assistantText.text;
+  }
+  return (params.resultText ?? params.assistantText.text) || params.fallbackText;
 }
 
 /** Unkeyed held snapshots, including terminal echoes, describe the whole pending run. */

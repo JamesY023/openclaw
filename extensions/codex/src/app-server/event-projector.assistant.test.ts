@@ -787,9 +787,15 @@ describe("CodexAppServerEventProjector assistant projection", () => {
     ]);
   });
 
-  it.each([false, true])(
-    "retains a Codex partial_answer before the final answer (native handoff: %s)",
-    async (handoff) => {
+  it.each([
+    { handoff: false, steer: false, finalPhase: "final_answer" },
+    { handoff: true, steer: false, finalPhase: "final_answer" },
+    { handoff: true, steer: false, finalPhase: undefined },
+    { handoff: true, steer: true, finalPhase: "final_answer" },
+    { handoff: true, steer: true, finalPhase: undefined },
+  ])(
+    "retains a Codex partial_answer (handoff: $handoff, steer: $steer, final phase: $finalPhase)",
+    async ({ handoff, steer, finalPhase }) => {
       const onAgentEvent = vi.fn();
       const onPartialReply = vi.fn();
       const projector = await createProjector({
@@ -799,6 +805,18 @@ describe("CodexAppServerEventProjector assistant projection", () => {
       });
       const partial = "The first result is ready.";
       const final = "The second result is ready.";
+
+      if (steer) {
+        const committed = {
+          type: "agentMessage",
+          id: "committed",
+          phase: "partial_answer",
+          text: "Earlier transcript block.",
+        };
+        await projector.handleNotification(forCurrentTurn("item/completed", { item: committed }));
+        expect(JSON.stringify(projector.buildSteeringTranscriptPrefix())).toContain(committed.text);
+        projector.markSteeringTranscriptPersisted();
+      }
 
       await projector.handleNotification(
         forCurrentTurn("item/started", {
@@ -818,17 +836,17 @@ describe("CodexAppServerEventProjector assistant projection", () => {
       }
       await projector.handleNotification(
         forCurrentTurn("item/started", {
-          item: { type: "agentMessage", id: "final", phase: "final_answer", text: "" },
+          item: { type: "agentMessage", id: "final", phase: finalPhase, text: "" },
         }),
       );
       await projector.handleNotification(agentMessageDelta(final, "final"));
       await projector.handleNotification(
         forCurrentTurn("item/completed", {
-          item: { type: "agentMessage", id: "final", phase: "final_answer", text: final },
+          item: { type: "agentMessage", id: "final", phase: finalPhase, text: final },
         }),
       );
       await projector.handleNotification(
-        turnCompleted([{ type: "agentMessage", id: "final", phase: "final_answer", text: final }]),
+        turnCompleted([{ type: "agentMessage", id: "final", phase: finalPhase, text: final }]),
       );
 
       const result = projector.buildResult(buildEmptyToolTelemetry());
@@ -840,9 +858,11 @@ describe("CodexAppServerEventProjector assistant projection", () => {
           .map((event) => [event.data.itemId, event.data.text, event.data.replaceable]),
       ).toEqual([
         ["partial", partial, undefined],
-        ["final", final, undefined],
+        ["final", final, finalPhase === undefined ? true : undefined],
       ]);
-      expect(onPartialReply.mock.calls.map((call) => call[0].text)).toEqual([partial, final]);
+      expect(onPartialReply.mock.calls.map((call) => call[0].text)).toEqual(
+        finalPhase === undefined ? [partial] : [partial, final],
+      );
     },
   );
 

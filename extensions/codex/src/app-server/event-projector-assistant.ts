@@ -633,20 +633,18 @@ export class CodexAssistantProjection {
   }
 
   private collectPersistableAssistantTexts(minIndex: number): string[] {
-    let texts: string[] = [];
+    const entries: Array<{ text: string; partial: boolean }> = [];
+    let replacementIndex = 0;
     let replaceable = false;
-    // Walk time order. Unphased text replaces the current segment. Stable partial
-    // and final answers accumulate unless they follow a replacement. A partial
-    // answer survives native work and is cut only at the persisted boundary.
-    // Silent payloads never replace; they only ride along for post-handoff identity.
+    // Reset the provisional segment without losing stable partials. Native work
+    // cuts ordinary answers; a committed steering prefix also cuts partials.
     for (let index = 0; index < this.assistantItemOrder.length; index += 1) {
       const itemId = this.assistantItemOrder[index];
       if (!itemId || this.isNonTerminalAssistantItem(itemId)) {
         continue;
       }
-      const cutoff = this.isPartialAnswerAssistantItem(itemId)
-        ? this.persistedAssistantBarrier
-        : minIndex;
+      const partial = this.isPartialAnswerAssistantItem(itemId);
+      const cutoff = partial ? this.persistedAssistantBarrier : minIndex;
       if (index < cutoff) {
         continue;
       }
@@ -654,20 +652,19 @@ export class CodexAssistantProjection {
       if (!text || this.isToolProgressEchoText(itemId, text)) {
         continue;
       }
-      if (isSilentReplyPayloadText(text)) {
-        texts.push(text);
-        continue;
+      // Silent payloads preserve terminal identity without resetting the segment.
+      if (!isSilentReplyPayloadText(text)) {
+        const stable = partial || this.isFinalAnswerAssistantItem(itemId);
+        if (!stable || replaceable) {
+          replacementIndex = entries.length;
+          replaceable = !stable;
+        }
       }
-      const isStableAnswer =
-        this.isFinalAnswerAssistantItem(itemId) || this.isPartialAnswerAssistantItem(itemId);
-      if (!isStableAnswer || replaceable) {
-        texts = [text];
-        replaceable = !isStableAnswer;
-        continue;
-      }
-      texts.push(text);
+      entries.push({ text, partial });
     }
-    return texts;
+    return entries
+      .filter((entry, index) => entry.partial || index >= replacementIndex)
+      .map((entry) => entry.text);
   }
 
   private noteNativeWorkBarrier(item: CodexThreadItem | undefined): void {
