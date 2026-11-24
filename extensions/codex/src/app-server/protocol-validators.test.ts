@@ -139,6 +139,27 @@ describe("passive native turn items", () => {
 });
 
 describe("Codex thread response validators", () => {
+  it("retains newer desktop item shapes alongside the pinned runtime", () => {
+    const items = [
+      { id: "audio", type: "userMessage", content: [{ type: "audio", fileId: "stored-audio" }] },
+      { id: "generated", type: "imageGeneration", status: "completed", fileId: "stored-image" },
+      { id: "partial", type: "agentMessage", phase: "partial_answer", text: "The result so far." },
+    ];
+    const nativeTurn = { id: "turn-1", status: "completed", items };
+    const response = makeMinimalResponse({ turns: [nativeTurn] });
+    expect(assertCodexThreadResumeResponse(response)).toMatchObject(response);
+    expect(
+      prepareCodexServerNotification({
+        method: "turn/completed",
+        params: { threadId: "thread-1", turn: nativeTurn },
+      }).completedTurn,
+    ).toMatchObject(nativeTurn);
+    const malformed = { ...nativeTurn, items: [{ ...items[0], content: [{ type: "audio" }] }] };
+    expect(() =>
+      assertCodexThreadResumeResponse(makeMinimalResponse({ turns: [malformed] })),
+    ).toThrow("Invalid Codex app-server");
+  });
+
   it.each([
     { label: "start", assertResponse: assertCodexThreadStartResponse },
     { label: "resume", assertResponse: assertCodexThreadResumeResponse },

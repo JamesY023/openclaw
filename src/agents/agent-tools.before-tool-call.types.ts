@@ -41,6 +41,8 @@ export type HookContext = {
   config?: OpenClawConfig;
   /** Selected tool registration owner; independent of the hook requesting approval. */
   toolOwnerPluginId?: string;
+  /** The concrete registered plugin tool's side-effect declaration, if any. */
+  toolSideEffectOwnerKey?: string;
   /** Tool execution cwd for host-derived path facts. */
   cwd?: string;
   /** Host workspace used to resolve relative tool params for diagnostics only. */

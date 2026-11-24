@@ -1331,7 +1331,6 @@ var isCodexDynamicToolCallParams = (() => {
             value !== null &&
             !Array.isArray(value) &&
             "id" in value &&
-            "result" in value &&
             "status" in value &&
             "type" in value &&
             (value.failure === void 0 ||
@@ -1339,7 +1338,7 @@ var isCodexDynamicToolCallParams = (() => {
               check_57(value.failure) ||
               value.failure === null) &&
             typeof value.id == "string" &&
-            typeof value.result == "string" &&
+            (value.result === void 0 || !("result" in value) || typeof value.result == "string") &&
             (value.revisedPrompt === void 0 ||
               !("revisedPrompt" in value) ||
               typeof value.revisedPrompt == "string" ||
@@ -1434,10 +1433,13 @@ var isCodexDynamicToolCallParams = (() => {
             value !== null &&
             !Array.isArray(value) &&
             "type" in value &&
-            "url" in value &&
             typeof value.type == "string" &&
             value.type === "audio" &&
-            typeof value.url == "string",
+            (value.url === void 0 || !("url" in value) || typeof value.url == "string") &&
+            (!(typeof value == "object" && value !== null && !Array.isArray(value)) ||
+              ("url" in value && typeof value.url == "string") ||
+              !(typeof value == "object" && value !== null && !Array.isArray(value)) ||
+              ("fileId" in value && typeof value.fileId == "string")),
           typeof value == "object" &&
             value !== null &&
             !Array.isArray(value) &&
@@ -1533,6 +1535,7 @@ var isCodexDynamicToolCallParams = (() => {
         [
           typeof value == "string" && value === "commentary",
           typeof value == "string" && value === "final_answer",
+          typeof value == "string" && value === "partial_answer",
         ].reduce((result, unique_11, _) => (unique_11 === !0 ? ++result : result), 0) === 1,
       check_26 = (value) =>
         typeof value == "object" &&
@@ -3417,7 +3420,6 @@ var isCodexDynamicToolCallParams = (() => {
             value !== null &&
             !Array.isArray(value) &&
             "id" in value &&
-            "result" in value &&
             "status" in value &&
             "type" in value &&
             (value.failure === void 0 ||
@@ -3425,7 +3427,7 @@ var isCodexDynamicToolCallParams = (() => {
               check_70(value.failure) ||
               value.failure === null) &&
             typeof value.id == "string" &&
-            typeof value.result == "string" &&
+            (value.result === void 0 || !("result" in value) || typeof value.result == "string") &&
             (value.revisedPrompt === void 0 ||
               !("revisedPrompt" in value) ||
               typeof value.revisedPrompt == "string" ||
@@ -3520,10 +3522,13 @@ var isCodexDynamicToolCallParams = (() => {
             value !== null &&
             !Array.isArray(value) &&
             "type" in value &&
-            "url" in value &&
             typeof value.type == "string" &&
             value.type === "audio" &&
-            typeof value.url == "string",
+            (value.url === void 0 || !("url" in value) || typeof value.url == "string") &&
+            (!(typeof value == "object" && value !== null && !Array.isArray(value)) ||
+              ("url" in value && typeof value.url == "string") ||
+              !(typeof value == "object" && value !== null && !Array.isArray(value)) ||
+              ("fileId" in value && typeof value.fileId == "string")),
           typeof value == "object" &&
             value !== null &&
             !Array.isArray(value) &&
@@ -3619,6 +3624,7 @@ var isCodexDynamicToolCallParams = (() => {
         [
           typeof value == "string" && value === "commentary",
           typeof value == "string" && value === "final_answer",
+          typeof value == "string" && value === "partial_answer",
         ].reduce((result, unique_23, _) => (unique_23 === !0 ? ++result : result), 0) === 1,
       check_40 = (value) =>
         typeof value == "object" &&
@@ -4788,7 +4794,6 @@ var isCodexDynamicToolCallParams = (() => {
             value !== null &&
             !Array.isArray(value) &&
             "id" in value &&
-            "result" in value &&
             "status" in value &&
             "type" in value &&
             (value.failure === void 0 ||
@@ -4796,7 +4801,7 @@ var isCodexDynamicToolCallParams = (() => {
               check_49(value.failure) ||
               value.failure === null) &&
             typeof value.id == "string" &&
-            typeof value.result == "string" &&
+            (value.result === void 0 || !("result" in value) || typeof value.result == "string") &&
             (value.revisedPrompt === void 0 ||
               !("revisedPrompt" in value) ||
               typeof value.revisedPrompt == "string" ||
@@ -4891,10 +4896,13 @@ var isCodexDynamicToolCallParams = (() => {
             value !== null &&
             !Array.isArray(value) &&
             "type" in value &&
-            "url" in value &&
             typeof value.type == "string" &&
             value.type === "audio" &&
-            typeof value.url == "string",
+            (value.url === void 0 || !("url" in value) || typeof value.url == "string") &&
+            (!(typeof value == "object" && value !== null && !Array.isArray(value)) ||
+              ("url" in value && typeof value.url == "string") ||
+              !(typeof value == "object" && value !== null && !Array.isArray(value)) ||
+              ("fileId" in value && typeof value.fileId == "string")),
           typeof value == "object" &&
             value !== null &&
             !Array.isArray(value) &&
@@ -4990,6 +4998,7 @@ var isCodexDynamicToolCallParams = (() => {
         [
           typeof value == "string" && value === "commentary",
           typeof value == "string" && value === "final_answer",
+          typeof value == "string" && value === "partial_answer",
         ].reduce((result, unique_8, _) => (unique_8 === !0 ? ++result : result), 0) === 1,
       check_17 = (value) =>
         typeof value == "object" &&
@@ -6162,7 +6171,6 @@ var isCodexDynamicToolCallParams = (() => {
             value !== null &&
             !Array.isArray(value) &&
             "id" in value &&
-            "result" in value &&
             "status" in value &&
             "type" in value &&
             (value.failure === void 0 ||
@@ -6170,7 +6178,7 @@ var isCodexDynamicToolCallParams = (() => {
               check_49(value.failure) ||
               value.failure === null) &&
             typeof value.id == "string" &&
-            typeof value.result == "string" &&
+            (value.result === void 0 || !("result" in value) || typeof value.result == "string") &&
             (value.revisedPrompt === void 0 ||
               !("revisedPrompt" in value) ||
               typeof value.revisedPrompt == "string" ||
@@ -6265,10 +6273,13 @@ var isCodexDynamicToolCallParams = (() => {
             value !== null &&
             !Array.isArray(value) &&
             "type" in value &&
-            "url" in value &&
             typeof value.type == "string" &&
             value.type === "audio" &&
-            typeof value.url == "string",
+            (value.url === void 0 || !("url" in value) || typeof value.url == "string") &&
+            (!(typeof value == "object" && value !== null && !Array.isArray(value)) ||
+              ("url" in value && typeof value.url == "string") ||
+              !(typeof value == "object" && value !== null && !Array.isArray(value)) ||
+              ("fileId" in value && typeof value.fileId == "string")),
           typeof value == "object" &&
             value !== null &&
             !Array.isArray(value) &&
@@ -6364,6 +6375,7 @@ var isCodexDynamicToolCallParams = (() => {
         [
           typeof value == "string" && value === "commentary",
           typeof value == "string" && value === "final_answer",
+          typeof value == "string" && value === "partial_answer",
         ].reduce((result, unique_8, _) => (unique_8 === !0 ? ++result : result), 0) === 1,
       check_17 = (value) =>
         typeof value == "object" &&

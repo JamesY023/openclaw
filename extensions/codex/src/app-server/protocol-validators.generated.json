@@ -740,7 +740,8 @@
               "description": "The assistant's terminal answer text for the current turn.",
               "enum": ["final_answer"],
               "type": "string"
-            }
+            },
+            { "type": "string", "enum": ["partial_answer"] }
           ]
         },
         "MisalignmentErrorDetails": {
@@ -1983,7 +1984,7 @@
                   "type": "string"
                 }
               },
-              "required": ["id", "result", "status", "type"],
+              "required": ["id", "status", "type"],
               "title": "ImageGenerationThreadItem",
               "type": "object"
             },
@@ -2289,9 +2290,13 @@
                 "type": { "enum": ["audio"], "title": "AudioUserInputType", "type": "string" },
                 "url": { "type": "string" }
               },
-              "required": ["type", "url"],
+              "required": ["type"],
               "title": "AudioUserInput",
-              "type": "object"
+              "type": "object",
+              "anyOf": [
+                { "required": ["url"], "properties": { "url": { "type": "string" } } },
+                { "required": ["fileId"], "properties": { "fileId": { "type": "string" } } }
+              ]
             },
             {
               "properties": {

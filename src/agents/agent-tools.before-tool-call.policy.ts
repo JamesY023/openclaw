@@ -67,7 +67,8 @@ async function requiresJessicaTalkOwner(
   if (
     !ctx?.runId ||
     LOCAL_TALK_MUTATIONS.has(toolName) ||
-    !buildToolMutationState(toolName, params).mutatingAction
+    !buildToolMutationState(toolName, params, { ownerKey: ctx.toolSideEffectOwnerKey })
+      .mutatingAction
   ) {
     return false;
   }

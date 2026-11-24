@@ -35,6 +35,28 @@ export function createCodexValidationSchemas() {
           // The pinned 0.161 runtime omits this optional field. Retain the
           // upstream 0.170 validation for newer external and desktop runtimes.
           ...externalAgentMessageModeration.definitions,
+          MessagePhase: {
+            ...sharedDefinitionsSchema.definitions.MessagePhase,
+            oneOf: [
+              ...sharedDefinitionsSchema.definitions.MessagePhase.oneOf,
+              { type: "string", enum: ["partial_answer"] },
+            ],
+          },
+          UserInput: {
+            ...sharedDefinitionsSchema.definitions.UserInput,
+            oneOf: sharedDefinitionsSchema.definitions.UserInput.oneOf.map((item) =>
+              item.title === "AudioUserInput"
+                ? {
+                    ...item,
+                    required: ["type"],
+                    anyOf: [
+                      { required: ["url"], properties: { url: { type: "string" } } },
+                      { required: ["fileId"], properties: { fileId: { type: "string" } } },
+                    ],
+                  }
+                : item,
+            ),
+          },
           ThreadItem: {
             ...sharedDefinitionsSchema.definitions.ThreadItem,
             oneOf: sharedDefinitionsSchema.definitions.ThreadItem.oneOf.map((item) =>
@@ -46,7 +68,10 @@ export function createCodexValidationSchemas() {
                       moderation: externalAgentMessageModeration.moderation,
                     },
                   }
-                : item,
+                : item.title === "ImageGenerationThreadItem"
+                  ? // 0.170 no longer includes the inline provider result for each item.
+                    { ...item, required: item.required.filter((key) => key !== "result") }
+                  : item,
             ),
           },
           AgentMessageDisplay: {

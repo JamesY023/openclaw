@@ -18,7 +18,7 @@ import {
   freezeDiagnosticTraceContext,
 } from "../infra/diagnostic-trace-context.js";
 import { captureDiagnosticToolProgress } from "../logging/diagnostic-run-activity.js";
-import { getPluginToolMeta } from "../plugins/tool-metadata.js";
+import { getPluginToolMeta, getPluginToolSideEffectOwnerKey } from "../plugins/tool-metadata.js";
 import { copyBeforeToolCallWrapperMetadata } from "./agent-tool-metadata.js";
 import {
   captureAgentToolExecutionBudget,
@@ -244,6 +244,7 @@ export function wrapToolWithBeforeToolCallHook(
   }
   const toolName = tool.name || "tool";
   const toolOwnerPluginId = getPluginToolMeta(tool)?.pluginId;
+  const toolSideEffectOwnerKey = getPluginToolSideEffectOwnerKey(tool);
   const admitExecution = captureAgentToolExecutionBudget();
   const diagnosticIdentity = resolveToolDiagnosticIdentity(tool);
   const hookOptions: BeforeToolCallDiagnosticOptions = {
@@ -391,7 +392,7 @@ export function wrapToolWithBeforeToolCallHook(
           ...hookMetadata,
           toolCallId,
           ctx: ctx
-            ? { ...ctx, toolOwnerPluginId }
+            ? { ...ctx, toolOwnerPluginId, toolSideEffectOwnerKey }
             : toolOwnerPluginId
               ? { toolOwnerPluginId }
               : undefined,
