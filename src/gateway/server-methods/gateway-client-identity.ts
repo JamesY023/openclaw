@@ -8,6 +8,7 @@ import {
 } from "../../../packages/gateway-protocol/src/index.js";
 import {
   getCommandSenderAuthority,
+  getTalkToolSenderAuthority,
   withCommandSenderAuthority,
 } from "../../auto-reply/command-sender-authority.js";
 import type { UserTurnInput } from "../../sessions/user-turn-transcript.types.js";
@@ -165,5 +166,6 @@ export function resolveChatSendCallerContext(
       GatewayClientCaps: client?.connect?.caps ?? [],
     },
     commandSenderAuthority,
+    synthetic ? undefined : getTalkToolSenderAuthority(client),
   );
 }

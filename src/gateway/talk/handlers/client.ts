@@ -388,6 +388,19 @@ export const talkClientHandlers: GatewayRequestHandlers = {
           target.agentId,
           resolveTalkAgentConsultAuthority(request.client?.connect?.scopes, request.client),
         );
+        const commandSender = getCommandSenderAuthority(authority.replyCaller);
+        const ownerProfileId = config.plugins?.entries?.["skynet-jessica"]?.config?.ownerProfileId;
+        const talkToolSender =
+          target.agentId === "jessica" && authority.senderIsOwner && typeof ownerProfileId === "string"
+            ? () => {
+                const currentConfig = request.context.getRuntimeConfig();
+                const currentOwner = currentConfig.plugins?.entries?.["skynet-jessica"]?.config
+                  ?.ownerProfileId;
+                return currentOwner === ownerProfileId && commandSender?.() === ownerProfileId
+                  ? ownerProfileId
+                  : undefined;
+              }
+            : undefined;
         // Only an explicitly requested voice ID scopes replay. An implicit record
         // may be regenerated after close/reconnect; chat still owns that call's replay.
         const idempotencyKey =
@@ -424,7 +437,8 @@ export const talkClientHandlers: GatewayRequestHandlers = {
                         caps: authority.replyCaller.GatewayClientCaps,
                       },
                     },
-                    getCommandSenderAuthority(authority.replyCaller),
+                    commandSender,
+                    talkToolSender,
                   )
                 : request.client,
             req: {

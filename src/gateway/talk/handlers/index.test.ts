@@ -22,6 +22,7 @@ import { resolveRealtimeVoiceAgentConsultToolsAllow } from "../../../talk/agent-
 import { REALTIME_VOICE_DESCRIBE_VIEW_TOOL_NAME } from "../../../talk/describe-view-tool.js";
 import type { RealtimeVoiceProviderResolveConfigContext } from "../../../talk/provider-types.js";
 import { withOpenClawTestState } from "../../../test-utils/openclaw-test-state.js";
+import { getTalkToolSenderAuthority } from "../../../auto-reply/command-sender-authority.js";
 import { resolveChatSendCallerContext } from "../../server-methods/gateway-client-identity.js";
 import { fixedStoreOwnershipConfig } from "../../server-methods/sessions-fixed-store.test-support.js";
 import type { GatewayClient, GatewayRequestHandlerOptions } from "../../server-methods/types.js";
@@ -2595,6 +2596,57 @@ describe("talk.client.toolCall handler", () => {
     expect(authorize().senderIsOwner).toBe(false);
     expect(copiedClient.connect.caps).toEqual(["tool-events"]);
   });
+
+  it.each(["owner-profile", "different-profile"])(
+    "projects only Jessica's current owner into hosted Talk tools (%s)",
+    async (profileId) => {
+      const connId = `conn-jessica-${profileId}`;
+      const sessionKey = "agent:jessica:main";
+      onTestFinished(() => forgetLegacyVoiceBinding(connId, sessionKey, "voice-test"));
+      const client: GatewayClient = {
+        connId,
+        authenticatedUserId: "synthetic@example.test",
+        authenticatedUserProfile: gatewayProfile(profileId, "Synthetic"),
+        connect: {
+          minProtocol: 1,
+          maxProtocol: 1,
+          client: { id: "openclaw-control-ui", version: "test", platform: "test", mode: "webchat" },
+          scopes: ["operator.admin"],
+          caps: ["tool-events"],
+        },
+      };
+      const config = {
+        plugins: { entries: { "skynet-jessica": { config: { ownerProfileId: "owner-profile" } } } },
+      };
+      expect(getTalkToolSenderAuthority(resolveChatSendCallerContext(client))).toBeUndefined();
+      let forwardedClient: GatewayClient | null | undefined;
+      mocks.chatSend.mockImplementationOnce(async (request: GatewayRequestHandlerOptions) => {
+        forwardedClient = request.client;
+        request.respond(true, { runId: "run-voice-1" }, undefined);
+      });
+      await callTalkHandler("talk.client.toolCall", {
+        params: {
+          sessionKey,
+          callId: "call-jessica-owner",
+          name: "openclaw_agent_consult",
+          args: { question: "Check status" },
+        },
+        client,
+        respond: vi.fn(),
+        context: { getRuntimeConfig: () => config },
+      });
+      const copiedClient = expectDefined(forwardedClient, "Talk consult must dispatch its client");
+      const context = resolveChatSendCallerContext(copiedClient);
+      const sender = getTalkToolSenderAuthority(context);
+      expect(context.SenderId).toBeUndefined();
+      expect(sender?.()).toBe(profileId === "owner-profile" ? profileId : undefined);
+      config.plugins.entries["skynet-jessica"].config.ownerProfileId = "new-owner";
+      expect(sender?.()).toBeUndefined();
+      config.plugins.entries["skynet-jessica"].config.ownerProfileId = "owner-profile";
+      client.invalidated = true;
+      expect(sender?.()).toBeUndefined();
+    },
+  );
 
   it.each(["closed", "relay"] as const)(
     "keeps legacy consults usable after rejecting an explicit %s voice record",
