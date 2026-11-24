@@ -59,18 +59,23 @@ export function createGatewayReadyAnnouncer(
     started = true;
     const retryDelayMs = 1_000;
     const deadline = performance.now() + 180_000;
-    const observe = async (): Promise<void> => {
-      if (!canAnnounce() || performance.now() >= deadline) {
+    const stillWatching = () => canAnnounce() && performance.now() < deadline;
+    const observe = async (initial = false): Promise<void> => {
+      if (!stillWatching()) {
         return;
       }
-      const prepared = await params.getReadiness.prepare();
-      if (!canAnnounce() || performance.now() >= deadline) {
-        return;
-      }
-      if (prepared.publish().ready) {
-        params.startupTrace.mark("ready");
-        writeReadyLog(params.log);
-        return;
+      // Retry from the same cheap state read as /readyz. The prepared check
+      // starts a runtime child probe, so repeat it only to confirm a ready state.
+      if (initial || params.getReadiness().ready) {
+        const prepared = await params.getReadiness.prepare();
+        if (!stillWatching()) {
+          return;
+        }
+        if (prepared.publish().ready) {
+          params.startupTrace.mark("ready");
+          writeReadyLog(params.log);
+          return;
+        }
       }
       // Admission can finish after chat unlocks. Observe that transition without
       // delaying startup observers or keeping a closing gateway alive.
@@ -80,6 +85,6 @@ export function createGatewayReadyAnnouncer(
         }, retryDelayMs).unref();
       }
     };
-    await observe();
+    await observe(true);
   };
 }

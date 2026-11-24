@@ -70,6 +70,8 @@ describe("Gateway readiness console marker", () => {
     vi.useFakeTimers();
     try {
       const params = readinessFixture();
+      const prepare = vi.fn(params.getReadiness.prepare);
+      params.getReadiness.prepare = prepare;
       const mark = vi.fn();
       const announce = createGatewayReadyAnnouncer({
         ...params,
@@ -80,6 +82,8 @@ describe("Gateway readiness console marker", () => {
       await announce();
       expect(params.log.info).not.toHaveBeenCalled();
       await announce();
+      await vi.advanceTimersByTimeAsync(3_000);
+      expect(prepare).toHaveBeenCalledTimes(1);
       params.setReady();
       await vi.advanceTimersByTimeAsync(1_000);
       expect(params.log.info).toHaveBeenCalledExactlyOnceWith("gateway ready", {
@@ -88,6 +92,7 @@ describe("Gateway readiness console marker", () => {
       await vi.advanceTimersByTimeAsync(1_000);
       expect(mark).toHaveBeenCalledExactlyOnceWith("ready");
       expect(params.log.info).toHaveBeenCalledTimes(1);
+      expect(prepare).toHaveBeenCalledTimes(2);
     } finally {
       vi.useRealTimers();
     }
