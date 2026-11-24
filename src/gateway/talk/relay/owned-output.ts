@@ -219,6 +219,7 @@ export async function acknowledgeOwnedTalkPlayback(
     throw new Error("Owned Talk playback has not completed");
   const { agentId, canonicalKey, sessionKey, storePath } = session.sessionTarget;
   const { messageId, text } = playback.terminal;
+  const retired = () => playback.controller.signal.aborted || output?.playback !== playback;
   playback.commit ??= appendOwnedRelayVoiceTranscript(
     {
       agentId,
@@ -239,12 +240,13 @@ export async function acknowledgeOwnedTalkPlayback(
     },
   )
     .then(() => {
+      if (retired()) return;
       playback.phase = "completed";
       session.harness.talk.endTurn({ turnId: playback.turnId, payload: { reason: "completed" } });
     })
     .catch((error: unknown) => {
       playback.commit = undefined;
-      throw error;
+      if (!retired()) throw error;
     });
   await playback.commit;
   return true;

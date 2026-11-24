@@ -152,4 +152,42 @@ describe("owned Talk output", () => {
     expect(session.ownedOutput!.playback!.turnId).toBe("second");
     expect(mocks.append).not.toHaveBeenCalled();
   });
+
+  it("settles an in-flight acknowledgement after retirement without ending the new turn", async () => {
+    const { session, final } = fixture();
+    const entered = Promise.withResolvers<void>();
+    const resume = Promise.withResolvers<void>();
+    const write = vi.fn();
+    mocks.append.mockImplementationOnce(async (_target, owned) => {
+      entered.resolve();
+      await resume.promise;
+      owned.assertCurrent();
+      write();
+    });
+    deliverOwnedTalkResult(session, final, "first");
+    await vi.waitFor(() => expect(session.ownedOutput?.playback?.phase).toBe("awaiting"));
+    const mark = session.ownedOutput!.playback!.markName;
+    const pending = acknowledgeOwnedTalkPlayback(session, mark, "completed");
+    const result = expect(pending).resolves.toBe(true);
+    await entered.promise;
+    cancelOwnedTalkPlayback(session, "first");
+    deliverOwnedTalkResult(session, { ...final, runId: "run-two" }, "second");
+    resume.resolve();
+    await result;
+    expect(session.ownedOutput!.playback!.turnId).toBe("second");
+    expect(session.harness.talk.endTurn).not.toHaveBeenCalled();
+    expect(write).not.toHaveBeenCalled();
+  });
+
+  it("reports a write failure on the current playback", async () => {
+    const { session, final } = fixture();
+    mocks.append.mockRejectedValueOnce(new Error("Synthetic transcript write failure"));
+    deliverOwnedTalkResult(session, final, "turn-one");
+    await vi.waitFor(() => expect(session.ownedOutput?.playback?.phase).toBe("awaiting"));
+    const mark = session.ownedOutput!.playback!.markName;
+    await expect(acknowledgeOwnedTalkPlayback(session, mark, "completed")).rejects.toThrow(
+      /write failure/,
+    );
+    expect(session.harness.talk.endTurn).not.toHaveBeenCalled();
+  });
 });
