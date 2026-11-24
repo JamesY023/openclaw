@@ -4,5 +4,7 @@
 export const CLAUDE_CLI_PROFILE_ID = "anthropic:claude-cli";
 /** @deprecated OpenAI provider-owned CLI profile id; do not use from third-party plugins. */
 export const CODEX_CLI_PROFILE_ID = "openai:codex-cli";
+/** Existing Jessica acceptance pin must never fall through to production quota. */
+export const JESSICA_ACCEPTANCE_PROFILE_ID = "openai:account-88121327-b5c0-4e19-aa7c-e2e6abd2f76b";
 /** @deprecated MiniMax provider-owned CLI profile id; do not use from third-party plugins. */
 export const MINIMAX_CLI_PROFILE_ID = "minimax-portal:minimax-cli";

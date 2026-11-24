@@ -22,6 +22,7 @@ import {
   resolveAuthProfileEligibility,
   resolveAuthProfileOrderWithMetadata,
 } from "../auth-profiles/order.js";
+import { JESSICA_ACCEPTANCE_PROFILE_ID } from "../auth-profiles/profile-ids.js";
 import { resolveStoredCredentialReadOnlyAvailability } from "../auth-profiles/read-only-availability.js";
 import { createSelectedAuthProfileUnavailableError } from "../auth-profiles/selection-error.js";
 import type { AuthProfileStore } from "../auth-profiles/types.js";
@@ -91,6 +92,7 @@ type PrepareAgentRuntimeAuthPlanParams = {
 function createAuthProfileCooldownError(
   params: PrepareAgentRuntimeAuthPlanParams,
   profileId: string,
+  message = `Auth profile "${profileId}" is temporarily unavailable for ${params.provider}/${params.modelId}.`,
 ): FailoverError {
   const reason =
     (params.authProfileStore &&
@@ -99,17 +101,14 @@ function createAuthProfileCooldownError(
         profileIds: [profileId],
       })) ??
     "unknown";
-  return new FailoverError(
-    `Auth profile "${profileId}" is temporarily unavailable for ${params.provider}/${params.modelId}.`,
-    {
-      reason,
-      status: resolveFailoverStatus(reason),
-      code: AUTH_PROFILE_COOLDOWN_ERROR_CODE,
-      provider: params.provider,
-      model: params.modelId,
-      profileId,
-    },
-  );
+  return new FailoverError(message, {
+    reason,
+    status: resolveFailoverStatus(reason),
+    code: AUTH_PROFILE_COOLDOWN_ERROR_CODE,
+    provider: params.provider,
+    model: params.modelId,
+    profileId,
+  });
 }
 
 export type PreparedAgentRuntimeAuthAttempt =
@@ -344,6 +343,7 @@ export function prepareAgentRuntimeAuth(
     (params.sessionAuthProfileSource === "user" || params.sessionAuthProfileSource === "user-link"
       ? requestedProfileId
       : undefined);
+  const acceptanceProfilePinned = lockedProfileId === JESSICA_ACCEPTANCE_PROFILE_ID;
   const harnessOwnsOpenAIAuth =
     params.harnessId?.trim().toLowerCase() === "codex" ||
     params.harnessRuntime?.trim().toLowerCase() === "codex";
@@ -372,6 +372,9 @@ export function prepareAgentRuntimeAuth(
         })
       : { eligible: false };
     if (!eligibility.eligible) {
+      if (acceptanceProfilePinned) {
+        throw new Error("fixture-only: acceptance login unavailable; live not run");
+      }
       if (
         !store?.profiles[lockedProfileId] &&
         params.config?.auth?.profiles?.[lockedProfileId]?.mode !== "aws-sdk"
@@ -384,6 +387,17 @@ export function prepareAgentRuntimeAuth(
       }
       throw new Error(
         `Auth profile "${lockedProfileId}" is not configured for ${authProfileSelectionProvider}.`,
+      );
+    }
+    if (
+      acceptanceProfilePinned &&
+      store &&
+      isProfileInCooldown(store, lockedProfileId, undefined, params.modelId)
+    ) {
+      throw createAuthProfileCooldownError(
+        params,
+        lockedProfileId,
+        "fixture-only: acceptance login cooling down; live not run",
       );
     }
   }
@@ -431,7 +445,9 @@ export function prepareAgentRuntimeAuth(
   const selectedProfileId =
     params.requiredAuthProfileId ??
     boundProfileId ??
-    (params.allowAuthProfileFallback === false ? lockedProfileId : undefined);
+    (acceptanceProfilePinned || params.allowAuthProfileFallback === false
+      ? lockedProfileId
+      : undefined);
   const resolvedAutomaticOrder =
     !harnessAllowsAuthProfileForwarding ||
     selectedProfileId ||

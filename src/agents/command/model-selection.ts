@@ -44,6 +44,7 @@ import {
   resolveNativeModelPrimary,
 } from "../agent-scope.js";
 import { isStoredCredentialCompatibleWithAuthProvider } from "../auth-profiles/order.js";
+import { JESSICA_ACCEPTANCE_PROFILE_ID } from "../auth-profiles/profile-ids.js";
 import { clearSessionAuthProfileOverride } from "../auth-profiles/session-override.js";
 import { ensureAuthProfileStoreAsync } from "../auth-profiles/store-runtime.js";
 import { ensureSelectedAgentHarnessPlugin } from "../harness/runtime-plugin.js";
@@ -485,6 +486,14 @@ export async function resolveEmbeddedModelSelection(params: {
         provider: authProvider,
         credential: profile,
       });
+    if (
+      !profileMatchesRuntime &&
+      authProfileId === JESSICA_ACCEPTANCE_PROFILE_ID &&
+      (entry.authProfileOverrideSource === "user" ||
+        entry.authProfileOverrideSource === "user-link")
+    ) {
+      throw new Error("fixture-only: acceptance login unavailable; live not run");
+    }
     const preserveUnavailableSelection = shouldPreserveUnavailableSessionAuthProfileOverride({
       store,
       recordedProvider: { provider: profile?.provider },

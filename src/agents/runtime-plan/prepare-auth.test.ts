@@ -37,6 +37,40 @@ type Params = Parameters<typeof prepare>[0];
 const xaiKey = (key: string) => createApiKeyCredential("xai", key);
 const pair = () => ({ "openai:platform": apiKey(), "openai:chatgpt": oauth() });
 
+it.each(["missing", "cooldown"] as const)(
+  "keeps Jessica's explicitly pinned acceptance login fail-closed on %s",
+  (availability) => {
+    const acceptance = "openai:account-88121327-b5c0-4e19-aa7c-e2e6abd2f76b";
+    const store = authStore({
+      "openai:production": oauth(),
+      ...(availability === "cooldown" && { [acceptance]: oauth() }),
+    });
+    if (availability === "cooldown") {
+      setProfileCooldown(store, acceptance);
+    }
+    expectAuthError({
+      ...subscription,
+      ...codexHarness,
+      ...userPin(acceptance),
+      authProfileStore: store,
+      allowTransientCooldownProbe: true,
+    }).toThrow(/fixture-only: acceptance login .*; live not run/u);
+  },
+);
+
+it("does not add production fallbacks to the pinned Jessica acceptance login", () => {
+  const acceptance = "openai:account-88121327-b5c0-4e19-aa7c-e2e6abd2f76b";
+  const prepared = prepare({
+    ...subscription,
+    ...codexHarness,
+    ...userPin(acceptance),
+    profiles: { "openai:production": oauth(), [acceptance]: oauth() },
+    order: { openai: ["openai:production", acceptance] },
+  });
+  expect(prepared.plan.forwardedAuthProfileCandidateIds).toEqual([acceptance]);
+  expect(prepared.attempts.map((attempt) => attempt.profileId)).toEqual([acceptance]);
+});
+
 // Provider-hook behavior is covered by its owner suites.
 vi.mock("../../plugins/provider-runtime.js", () => ({
   buildProviderMissingAuthMessageWithPlugin: () => undefined,

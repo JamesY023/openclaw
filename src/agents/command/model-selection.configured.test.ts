@@ -325,6 +325,29 @@ describe("command selection with configured model facts", () => {
     });
   });
 
+  it("refuses an incompatible pinned Jessica acceptance login without clearing it", async () => {
+    const fixture = createFixture();
+    const profileId = "openai:account-88121327-b5c0-4e19-aa7c-e2e6abd2f76b";
+    fixture.inventory.mockReturnValue(customCatalog("manual"));
+    fixture.userSelection("manual", "custom", {
+      authProfileOverride: profileId,
+      authProfileOverrideSource: "user-link",
+    });
+    vi.spyOn(authProfiles, "ensureAuthProfileStoreAsync").mockResolvedValue({
+      version: 1,
+      profiles: {
+        [profileId]: {
+          type: "api_key",
+          provider: "other",
+          key: "synthetic-incompatible-credential",
+        },
+      },
+    });
+    await expect(fixture.unchanged()).rejects.toThrow(
+      "fixture-only: acceptance login unavailable; live not run",
+    );
+  });
+
   it.each(["custom/child", "blocked", "locked"])(
     "rejects a role-denied %s selection before runtime effects",
     async (model) => {
