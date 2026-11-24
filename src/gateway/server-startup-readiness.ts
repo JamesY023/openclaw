@@ -60,28 +60,40 @@ export function createGatewayReadyAnnouncer(
     const retryDelayMs = 1_000;
     const deadline = performance.now() + 180_000;
     const stillWatching = () => canAnnounce() && performance.now() < deadline;
+    let reportedObservationError = false;
     const observe = async (initial = false): Promise<void> => {
       if (!stillWatching()) {
         return;
       }
-      // Retry from the same cheap state read as /readyz. The prepared check
-      // starts a runtime child probe, so repeat it only to confirm a ready state.
-      if (initial || params.getReadiness().ready) {
-        const prepared = await params.getReadiness.prepare();
+      let ready = false;
+      try {
+        // Retry from the same cheap state read as /readyz. The prepared check
+        // starts a runtime child probe, so repeat it only to confirm a ready state.
+        if (initial || params.getReadiness().ready) {
+          const prepared = await params.getReadiness.prepare();
+          ready = stillWatching() && prepared.publish().ready;
+        }
+      } catch {
         if (!stillWatching()) {
           return;
         }
-        if (prepared.publish().ready) {
-          params.startupTrace.mark("ready");
-          writeReadyLog(params.log);
-          return;
+        if (!reportedObservationError) {
+          reportedObservationError = true;
+          params.log.warn("Gateway startup readiness recheck failed; will retry while starting");
         }
+      }
+      if (ready) {
+        params.startupTrace.mark("ready");
+        writeReadyLog(params.log);
+        return;
       }
       // Admission can finish after chat unlocks. Observe that transition without
       // delaying startup observers or keeping a closing gateway alive.
-      if (performance.now() + retryDelayMs < deadline) {
+      if (canAnnounce() && performance.now() + retryDelayMs < deadline) {
         setTimeout(() => {
-          void observe().catch(() => params.log.warn("Gateway startup readiness recheck failed"));
+          void observe().catch(() =>
+            params.log.warn("Gateway startup readiness announcement failed"),
+          );
         }, retryDelayMs).unref();
       }
     };
