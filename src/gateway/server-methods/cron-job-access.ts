@@ -188,6 +188,7 @@ export function scopedCronJobHandler<P extends CronJobIdParams>(
   ) => ReturnType<GatewayRequestHandler>,
   scope: {
     allowCurrentJob?: boolean;
+    currentJobOnly?: boolean;
     checkVisibility?: boolean;
     preserveCronGetWireMessage?: boolean;
   } = {},
@@ -213,6 +214,7 @@ export function scopedCronJobHandler<P extends CronJobIdParams>(
     const visibility = scope.checkVisibility ? visibilityRead.resolve() : undefined;
     if (
       !job ||
+      (scope.currentJobOnly && callerScope?.currentJobId && callerScope.currentJobId !== jobId) ||
       (scope.checkVisibility &&
         !cronJobIsVisible(job, visibility, context.cron.getDefaultAgentId())) ||
       !cronJobMatchesCallerScope({

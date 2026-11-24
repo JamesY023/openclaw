@@ -42,4 +42,6 @@ export type PluginHookToolContext = {
   requester?: PluginHookToolRequesterContext;
   /** Run origin (for example "user", "cron", or "memory"); metadata, not authorization. */
   trigger?: string;
+  /** Host-owned phase for a native tool's policy check before dispatch. */
+  policyPhase?: "native-pre-tool-use";
 };

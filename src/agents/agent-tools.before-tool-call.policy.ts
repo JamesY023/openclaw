@@ -44,11 +44,51 @@ import {
   reconcileCodeModeExecBeforeHookParams,
 } from "./code-mode-control-tools.js";
 import { admitSingleToolCallLoop } from "./tool-loop-admission.js";
+import { buildToolMutationState } from "./tool-mutation.js";
 import { normalizeToolPolicyName } from "./tool-policy.js";
 import { getGatewayToolCallerIdentity } from "./tools/gateway-caller-context.js";
 
 const BEFORE_TOOL_CALL_HOOK_FAILURE_REASON =
   "Tool call blocked because before_tool_call hook failed";
+const LOCAL_TALK_MUTATIONS = new Set([
+  "write",
+  "edit",
+  "apply_patch",
+  "create_goal",
+  "update_goal",
+  "get_goal",
+]);
+
+async function requiresJessicaTalkOwner(
+  ctx: HookContext | undefined,
+  toolName: string,
+  params: unknown,
+) {
+  if (
+    !ctx?.runId ||
+    LOCAL_TALK_MUTATIONS.has(toolName) ||
+    !buildToolMutationState(toolName, params).mutatingAction
+  ) {
+    return false;
+  }
+  const { resolveClientVoiceRunBinding } = await import("../talk/client-voice-session.js");
+  const voice = resolveClientVoiceRunBinding(ctx.runId);
+  if (voice?.agentId !== "jessica") {
+    return false;
+  }
+  const ownerProfileId = ctx.config?.plugins?.entries?.["skynet-jessica"]?.config?.ownerProfileId;
+  return !(
+    ctx.agentId === voice.agentId &&
+    ctx.sessionKey === voice.sessionKey &&
+    voice.sessionKey.startsWith("agent:jessica:") &&
+    !/^agent:jessica:(?:subagent|cron|worker|acp):/u.test(voice.sessionKey) &&
+    typeof ownerProfileId === "string" &&
+    ownerProfileId.length > 0 &&
+    ctx.requester?.channel === "webchat" &&
+    ctx.requester.senderIsOwner === true &&
+    ctx.requester.senderId === ownerProfileId
+  );
+}
 
 /** Keep receipt routing private without widening observable hook outcomes. */
 function markPrivateDecision(
@@ -81,6 +121,7 @@ export async function runBeforeToolCallHook(args: {
   toolCallId?: string;
   ctx?: HookContext;
   signal?: AbortSignal;
+  policyPhase?: "native-pre-tool-use";
   approvalMode?: "request" | "report" | "deny" | "defer";
 }): Promise<HookOutcome> {
   const toolName = normalizeToolPolicyName(args.toolName || "tool");
@@ -99,6 +140,16 @@ export async function runBeforeToolCallHook(args: {
     args.signal?.throwIfAborted();
   }
   try {
+    if (await requiresJessicaTalkOwner(args.ctx, toolName, params)) {
+      const outcome: HookOutcome = {
+        blocked: true,
+        kind: "veto",
+        reason: "This Jessica Talk action requires the authenticated owner.",
+        params,
+      };
+      markPrivateDecision(outcome, "genericDecision");
+      return outcome;
+    }
     if (args.ctx?.sessionKey) {
       if (args.ctx.loopDetection?.enabled === true) {
         const { markDiagnosticArgumentChurnObservation } = await loadBeforeToolCallRuntime();
@@ -182,6 +233,7 @@ export async function runBeforeToolCallHook(args: {
       ...(args.ctx?.channelId && { channelId: args.ctx.channelId }),
       ...(args.ctx?.requester ? { requester: args.ctx.requester } : {}),
       ...(args.ctx?.trigger && { trigger: args.ctx.trigger }),
+      ...(args.policyPhase === "native-pre-tool-use" ? { policyPhase: args.policyPhase } : {}),
     });
     const toolContext = buildToolContext(toolIdentity);
     // Policies form a mutation chain. Reconcile each decision against the prior

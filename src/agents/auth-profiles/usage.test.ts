@@ -343,7 +343,10 @@ describe("markAuthProfileFailure — WHAM-aware Codex cooldowns", () => {
     async (available) => {
       const now = Date.now();
       const blockedUntil = now + 86_400_000;
-      const { store, refreshed } = expiredQuota(now);
+      const { store, refreshed } = expiredQuota(now, {
+        ...blockedStats(now),
+        blockedSource: "codex_rate_limits",
+      });
       const entered = createDeferredCore();
       const release = createDeferredCore();
       resolveApiKeyForProfileMock.mockImplementation(async () => {

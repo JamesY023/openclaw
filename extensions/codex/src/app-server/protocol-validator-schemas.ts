@@ -1,4 +1,5 @@
 import { normalizeJsonSchemaForTypeBox } from "openclaw/plugin-sdk/json-schema-runtime";
+import externalAgentMessageModeration from "./protocol-agent-message-moderation.json" with { type: "json" };
 import rawDynamicToolCallParamsSchema from "./protocol-generated/json/DynamicToolCallParams.json" with { type: "json" };
 import sharedDefinitionsSchema from "./protocol-generated/json/v2/CodexAppServerProtocolDefinitions.json" with { type: "json" };
 import rawErrorNotificationSchema from "./protocol-generated/json/v2/ErrorNotification.json" with { type: "json" };
@@ -31,12 +32,26 @@ export function createCodexValidationSchemas() {
         $id: sharedDefinitionsId,
         definitions: {
           ...sharedDefinitionsSchema.definitions,
-          // Custom, remote, and desktop runtimes still support pre-0.170 display
-          // payloads. Keep this wire compatibility until the native minimum moves
-          // past those versions; the generated mirror stays exact to the pin.
+          // The pinned 0.161 runtime omits this optional field. Retain the
+          // upstream 0.170 validation for newer external and desktop runtimes.
+          ...externalAgentMessageModeration.definitions,
+          ThreadItem: {
+            ...sharedDefinitionsSchema.definitions.ThreadItem,
+            oneOf: sharedDefinitionsSchema.definitions.ThreadItem.oneOf.map((item) =>
+              item.title === "AgentMessageThreadItem"
+                ? {
+                    ...item,
+                    properties: {
+                      ...item.properties,
+                      moderation: externalAgentMessageModeration.moderation,
+                    },
+                  }
+                : item,
+            ),
+          },
           AgentMessageDisplay: {
             anyOf: [
-              sharedDefinitionsSchema.definitions.AgentMessageDisplay,
+              externalAgentMessageModeration.definitions.AgentMessageDisplay,
               {
                 type: "object",
                 required: ["action"],

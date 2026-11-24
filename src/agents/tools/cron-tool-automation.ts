@@ -6,9 +6,24 @@ import {
   recordCronNextCheckProposal,
 } from "../../infra/agent-run-registry.automation.js";
 import { getAgentRunContext } from "../../infra/agent-run-registry.js";
-import { jsonResult, readNonNegativeIntegerParam, readToolStringParam } from "./common.js";
+import { jsonResult, readToolStringParam } from "./common.js";
 import type { CronToolOptions } from "./cron-tool.types.js";
 import type { callGatewayTool, GatewayCallOptions } from "./gateway.js";
+
+export function readCronScratchSetArguments(params: Record<string, unknown>) {
+  const { content, expectedRevision } = params;
+  if (typeof content !== "string" && content !== null) {
+    throw new Error("scratch_set requires complete content or null to clear");
+  }
+  if (
+    typeof expectedRevision !== "number" ||
+    !Number.isSafeInteger(expectedRevision) ||
+    expectedRevision < 0
+  ) {
+    throw new Error("scratch_set requires expectedRevision from scratch_get");
+  }
+  return { content, expectedRevision };
+}
 
 export function createCronAutomationActions(opts?: CronToolOptions) {
   const selfJobId = opts?.selfRemoveOnlyJobId?.trim();
@@ -35,6 +50,7 @@ export function createCronAutomationActions(opts?: CronToolOptions) {
       params: Record<string, unknown>,
       callGateway: typeof callGatewayTool,
       gatewayOpts: GatewayCallOptions,
+      signal?: AbortSignal,
     ) => {
       assertCurrentRun?.();
       switch (action) {
@@ -45,24 +61,25 @@ export function createCronAutomationActions(opts?: CronToolOptions) {
               "scratch actions are only available inside the currently running automation; use the automation editor for other jobs",
             );
           }
+          const allowed =
+            action === "scratch_get" ? ["action"] : ["action", "content", "expectedRevision"];
+          if (Object.keys(params).some((key) => !allowed.includes(key))) {
+            throw new Error("Scratch accepts only current-automation checkpoint arguments");
+          }
+          const identity = { requireAgentRuntimeIdentity: true, signal };
           if (action === "scratch_get") {
             return jsonResult(
-              await callGateway("cron.scratch.get", gatewayOpts, { id: selfJobId }),
+              await callGateway("cron.scratch.get", gatewayOpts, { id: selfJobId }, identity),
             );
           }
-          if (typeof params.content !== "string" && params.content !== null) {
-            throw new Error("scratch_set requires complete content or null to clear");
-          }
-          const expectedRevision = readNonNegativeIntegerParam(params, "expectedRevision");
-          if (expectedRevision === undefined) {
-            throw new Error("scratch_set requires expectedRevision from scratch_get");
-          }
+          const args = readCronScratchSetArguments(params);
           return jsonResult(
-            await callGateway("cron.scratch.set", gatewayOpts, {
-              id: selfJobId,
-              content: params.content,
-              expectedRevision,
-            }),
+            await callGateway(
+              "cron.scratch.set",
+              gatewayOpts,
+              { id: selfJobId, ...args },
+              identity,
+            ),
           );
         }
         case "record_result": {

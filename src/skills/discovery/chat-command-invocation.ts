@@ -2,6 +2,7 @@ import {
   normalizeLowercaseStringOrEmpty,
   normalizeOptionalLowercaseString,
 } from "@openclaw/normalization-core/string-coerce";
+import { listReservedChatSlashCommandNames } from "../../auto-reply/commands-registry.data.js";
 import type { ExplicitSkillSelection, SkillCommandSpec } from "../types.js";
 import { resolveSkillReadPath } from "../workspace-skill-read-path.js";
 import {
@@ -100,9 +101,12 @@ export function resolveSkillCommandInvocation(params: {
   const command =
     commandName === "skill"
       ? findSkillCommand(params.skillCommands, invocation[1] ?? "")
-      : params.skillCommands.find(
+      : (params.skillCommands.find(
           (entry) => normalizeOptionalLowercaseString(entry.name) === commandName,
-        );
+        ) ??
+        (listReservedChatSlashCommandNames().has(commandName)
+          ? undefined
+          : findSkillCommand(params.skillCommands, commandName)));
   return command ? { command, args: invocation[2]?.trim() || undefined } : null;
 }
 

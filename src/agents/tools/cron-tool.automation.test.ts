@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   claimAgentRunContext,
   clearAgentRunContext,
@@ -14,6 +14,7 @@ import {
   readGatewayCall,
 } from "./cron-tool.test-support.js";
 import { getGatewayToolCallerIdentity } from "./gateway-caller-context.js";
+import { callGatewayTool } from "./gateway.js";
 
 const runId = "automation-result-run";
 const jobId = "automation-result-job";
@@ -155,8 +156,18 @@ describe("automation invocation tools", () => {
       method: "cron.scratch.set",
       params: { id: jobId, content: null, expectedRevision: 3 },
     });
+    expect(vi.mocked(callGatewayTool).mock.calls[0]?.[3]).toMatchObject({
+      requireAgentRuntimeIdentity: true,
+    });
     expect(receiptAuthority).toBeDefined();
     invocation.closed = true;
     expect(receiptAuthority?.()).toBe(false);
+  });
+
+  it("rejects a string checkpoint revision before model argument coercion", () => {
+    const { tool } = createInvocation();
+    expect(() =>
+      tool.prepareArguments?.({ action: "scratch_set", content: "fixture", expectedRevision: "2" }),
+    ).toThrow("scratch_set requires expectedRevision");
   });
 });

@@ -191,13 +191,17 @@ async function resolveHarnessCapabilityProfile(
 function applyHarnessToolPolicy(
   tools: AnyAgentTool[],
   params: MaterializeRequesterScopedMcpToolsForHarnessRunParams & {
+    scopedToolsAllow?: string[];
     onFilter?: (event: ToolPolicyFilterEvent) => void;
   },
 ): AnyAgentTool[] {
   if (tools.length === 0) {
     return tools;
   }
-  const allowed = applyEmbeddedAttemptToolsAllow(tools, params.toolsAllow, {
+  const creatorAllowed = applyEmbeddedAttemptToolsAllow(tools, params.toolsAllow, {
+    toolMeta: (tool) => getPluginToolMeta(tool),
+  });
+  const allowed = applyEmbeddedAttemptToolsAllow(creatorAllowed, params.scopedToolsAllow, {
     toolMeta: (tool) => getPluginToolMeta(tool),
   });
   const profile = params.conversationCapabilityProfile;
@@ -226,6 +230,8 @@ export async function materializeStaticMcpToolsForHarnessRunCore(
     projectedMcpServers?: CodexMcpServersConfig;
     /** Mutation-only probes retire their isolated runtime after the snapshot. */
     retireSessionRuntimeAfterDispose?: boolean;
+    /** The job's explicit finite scope narrows the creator's MCP tools. */
+    scopedToolsAllow?: string[];
   },
 ): Promise<StaticHarnessMcpTools> {
   const conversationCapabilityProfile = await resolveHarnessCapabilityProfile(params);

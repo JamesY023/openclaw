@@ -1573,6 +1573,40 @@ describe("native hook relay registry", () => {
     });
   });
 
+  it.each([false, true])(
+    "carries the native policy phase to the hook (host-bound: %s)",
+    async (hostBound) => {
+      const beforeToolCall = vi.fn(() => undefined);
+      initializeGlobalHookRunner(
+        createMockPluginRegistry([{ hookName: "before_tool_call", handler: beforeToolCall }]),
+      );
+      const runId = "run-native-policy-phase";
+      const fixture = hostBound
+        ? await createAdmittedHostCapabilityTestFixture({ runId })
+        : undefined;
+      const relay = registerOwnedRelay({
+        relayId: "codex-native-policy-phase",
+        runId,
+        allowedEvents: ["pre_tool_use"],
+        ...(fixture ? { runBeforeToolCall: fixture.hostCapabilities.runBeforeToolCall } : {}),
+      });
+      try {
+        await invokeRelay(relay.relayId, "pre_tool_use", {
+          tool_name: "fixture",
+          tool_use_id: "native-phase-1",
+          tool_input: { policyPhase: "untrusted-argument" },
+        });
+        expect(getMockCallArg(beforeToolCall, 0, 1, "before tool call context")).toMatchObject({
+          policyPhase: "native-pre-tool-use",
+        });
+      } finally {
+        if (fixture) {
+          closeAdmittedRunDelegatedAuthority(fixture.admittedRunContext);
+        }
+      }
+    },
+  );
+
   it.each(["timeout", "rejected projection"] as const)(
     "preserves native pre-tool failure ownership for %s",
     async (mode) => {

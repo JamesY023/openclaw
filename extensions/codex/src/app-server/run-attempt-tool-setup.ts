@@ -198,6 +198,7 @@ export async function prepareCodexAttemptTools(runtime: CodexAttemptRuntime) {
   >;
   let creatorAuthorityPromise: ReturnType<CreatorAuthorityResolver> | undefined;
   let resolveCreatorAuthorityImpl: CreatorAuthorityResolver | undefined;
+  let scopedCreatorAuthoritySequence = 0;
   const runtimeYieldCompletionClaim: {
     current?: () => boolean | { pendingChildren: NativePendingChild[] };
   } = {};
@@ -237,11 +238,17 @@ export async function prepareCodexAttemptTools(runtime: CodexAttemptRuntime) {
     computerContextEpoch,
     ...(canResolveAnyScheduledCreatorAuthority
       ? {
-          resolveCronCreatorToolAuthority: (options?: { signal?: AbortSignal }) => {
+          resolveCronCreatorToolAuthority: (options?: {
+            signal?: AbortSignal;
+            toolsAllow?: string[];
+          }) => {
             if (!resolveCreatorAuthorityImpl) {
               throw new Error("configured MCP authority resolver was invoked before tool setup");
             }
             options?.signal?.throwIfAborted();
+            if (options?.toolsAllow) {
+              return resolveCreatorAuthorityImpl(options);
+            }
             if (creatorAuthorityPromise) {
               return creatorAuthorityPromise;
             }
@@ -310,12 +317,14 @@ export async function prepareCodexAttemptTools(runtime: CodexAttemptRuntime) {
       }
     })());
   try {
+    const inheritedToolAllowlist: string[] = [];
     const tools = await buildDynamicTools({
       ...commonToolParams,
       registerRunCleanup: (cleanup) => runCleanups.push(cleanup),
       onMessageToolTargetResolved: (required) => {
         requireExplicitMessageTarget = required;
       },
+      inheritedToolAllowlistRef: inheritedToolAllowlist,
       cronCreatorToolAllowlistRef: cronCreatorToolAllowlist,
       cronCreatorToolAllowlistCaptureRef,
       onPersistentWebSearchPolicyResolved: (allowed) => {
@@ -544,6 +553,16 @@ export async function prepareCodexAttemptTools(runtime: CodexAttemptRuntime) {
       ),
       hookContext,
     });
+    if (inheritedToolAllowlist.length > 0) {
+      const inheritable = new Set([
+        ...inheritedToolAllowlist,
+        ...(configuredMcp?.tools.map((tool) => tool.name) ?? []),
+      ]);
+      const names = toolBridge.availableTools
+        .map((tool) => tool.name)
+        .filter((name) => inheritable.has(name));
+      inheritedToolAllowlist.splice(0, inheritedToolAllowlist.length, ...new Set(names));
+    }
     const captureCronCreatorToolAllowlist = async () => {
       await captureFinalCodexCronCreatorToolAllowlist(
         cronCreatorToolAllowlist,
@@ -595,12 +614,15 @@ export async function prepareCodexAttemptTools(runtime: CodexAttemptRuntime) {
             try {
               materialized = await materializeStaticMcpToolsForHarnessRun({
                 ...mcpOptions,
-                sessionId: `cron-authority:${params.runId}`,
+                sessionId: options?.toolsAllow
+                  ? `cron-authority:${params.runId}:${++scopedCreatorAuthoritySequence}`
+                  : `cron-authority:${params.runId}`,
                 agentId: sessionAgentId,
                 reservedToolNames: configuredMcp
                   ? reservedToolNames
                   : toolBridge.availableTools.map((tool) => tool.name),
                 projectedMcpServers: bundleMcpThreadConfig.configPatch?.mcp_servers,
+                scopedToolsAllow: options?.toolsAllow,
                 retireSessionRuntimeAfterDispose: true,
               });
             } catch (error) {

@@ -37,7 +37,10 @@ import {
   readPositiveIntegerParam,
   readToolStringParam,
 } from "./common.js";
-import { createCronAutomationActions } from "./cron-tool-automation.js";
+import {
+  createCronAutomationActions,
+  readCronScratchSetArguments,
+} from "./cron-tool-automation.js";
 import {
   isEmptyRecoveredCronPatch,
   prepareCronToolArguments,
@@ -53,6 +56,7 @@ import {
   assertInheritedCronToolCaptureReady,
   capCronJobToolsAllowOnCreate,
   cronCreateRequiresCreatorAuthority,
+  readExplicitFiniteCronToolsAllow,
   resolveCronCreatorExecToolTarget,
 } from "./cron-tool-creator-cap.js";
 import { buildCronToolDescription } from "./cron-tool-description.js";
@@ -174,7 +178,13 @@ export function createCronTool(opts?: CronToolOptions): AnyAgentTool {
       nextCheckEnabled,
       management: managementAuthority && (managementAuthority.managementOnly ? "only" : "also"),
     }),
-    prepareArguments: prepareCronToolArguments,
+    prepareArguments: (args) => {
+      // Enforce the checkpoint revision on native bytes before general tool coercion.
+      if (isRecord(args) && args.action === "scratch_set") {
+        readCronScratchSetArguments(args);
+      }
+      return prepareCronToolArguments(args);
+    },
     execute: async (_toolCallId, args, operationSignal) => {
       operationSignal?.throwIfAborted();
       assertCurrentRun?.();
@@ -453,7 +463,10 @@ export function createCronTool(opts?: CronToolOptions): AnyAgentTool {
               });
               const resolvedAuthority =
                 requiresCreatorAuthority && opts?.resolveCreatorToolAuthority
-                  ? await opts.resolveCreatorToolAuthority({ signal: operationSignal })
+                  ? await opts.resolveCreatorToolAuthority({
+                      signal: operationSignal,
+                      toolsAllow: readExplicitFiniteCronToolsAllow(job.payload),
+                    })
                   : undefined;
               operationSignal?.throwIfAborted();
               const creatorToolAllowlist = resolvedAuthority?.tools ?? opts?.creatorToolAllowlist;
@@ -661,7 +674,13 @@ export function createCronTool(opts?: CronToolOptions): AnyAgentTool {
             case "scratch_set":
             case "record_result":
             case "next_check":
-              return await automation.execute(action, params, callGateway, gatewayOpts);
+              return await automation.execute(
+                action,
+                params,
+                callGateway,
+                gatewayOpts,
+                operationSignal,
+              );
             case "wake": {
               const text = readToolStringParam(params, "text", { required: true });
               const mode =

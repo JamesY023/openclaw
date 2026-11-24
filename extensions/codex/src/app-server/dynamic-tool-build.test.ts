@@ -186,13 +186,16 @@ it("binds a resolver-backed constructed tool surface exactly once", async () => 
     provenance: { version: 1 as const, source: "final-executable-surface" as const },
   }));
   const effectiveCwd = path.join(workspaceDir, "native-cwd");
+  const inheritedToolAllowlistRef: string[] = [];
 
   const tools = await buildTools({
     effectiveCwd,
     resolveCronCreatorToolAuthority,
+    inheritedToolAllowlistRef,
   });
 
   expect(factory).toHaveBeenCalledOnce();
+  expect(factory.mock.calls[0]?.[0]?.inheritedToolAllowlistRef).toBe(inheritedToolAllowlistRef);
   expect(bindToolSurface).toHaveBeenCalledExactlyOnceWith(
     expect.arrayContaining([expect.objectContaining({ name: "read" })]),
     { cwd: effectiveCwd, nativeLocalExecution: true },

@@ -66,6 +66,7 @@ import {
 import { buildDeveloperInstructions } from "./thread-prompt.js";
 import {
   attestCodexRestrictedToolSurfaceMcpServersDisabled,
+  buildCodexRuntimeThreadConfigForRun,
   buildThreadResumeParams,
   buildThreadStartParams,
 } from "./thread-requests.js";
@@ -135,6 +136,24 @@ it("uses direct OpenClaw functions and hosted web search for subscription sharin
   expect(restricted.config?.["features.apps"]).toBe(false);
   expect(restricted.config?.["orchestrator.mcp.enabled"]).toBe(false);
 });
+
+it.each([{ "features.apps": false }, undefined])(
+  "preserves an explicit cloud Apps opt-out for restricted scheduled turns (%j)",
+  (config) => {
+    const params = createAttemptParams({ provider: "openai" });
+    params.pluginHarnessToolPolicyRestricted = true;
+    params.scheduledRuntimeAuthority = {} as NonNullable<
+      EmbeddedRunAttemptParams["scheduledRuntimeAuthority"]
+    >;
+    const runtime = buildCodexRuntimeThreadConfigForRun(params, config, {
+      nativeCodeModeEnabled: false,
+      ...(config
+        ? {}
+        : { nativeQuestionConfig: { config: { features: { apps: false } }, origins: {} } }),
+    });
+    expect(runtime["features.apps"]).toBe(false);
+  },
+);
 
 describe("Codex context window config", () => {
   it("forwards only a prepared cap on thread start and resume (#124702)", async () => {

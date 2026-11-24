@@ -637,6 +637,23 @@ it("resolves symbolic groups before persisting the cap", async () => {
   });
 });
 
+it("asks the creator resolver for the exact finite configured MCP tools", async () => {
+  const resolveCreatorToolAuthority = vi.fn(async () =>
+    resolvedCreatorAuthority(["read", "configured__lookup"]),
+  );
+  await executeCron(addJob({ payload: agentTurn({ toolsAllow: ["configured__lookup"] }) }), {
+    ...mainCaller,
+    creatorToolAllowlist: ["read"],
+    resolveCreatorToolAuthority,
+  });
+  expect(resolveCreatorToolAuthority).toHaveBeenCalledWith(
+    expect.objectContaining({ toolsAllow: ["configured__lookup"] }),
+  );
+  expect(readGatewayCall().params).toMatchObject({
+    payload: { toolsAllow: ["configured__lookup"] },
+  });
+});
+
 it("fails incomplete inherited and unknown finite adds while preserving known finite tools", async () => {
   const captureRef = {};
   const tool = createTestCronTool({

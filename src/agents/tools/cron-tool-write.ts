@@ -36,6 +36,7 @@ import {
   INCOMPLETE_CRON_CREATOR_AUTHORITY_MESSAGE,
   isCronCreatorToolCaptureComplete,
   planCronJobUpdatePatch,
+  readExplicitFiniteCronToolsAllow,
   resolveCronCreatorExecToolTarget,
 } from "./cron-tool-creator-cap.js";
 import type {
@@ -387,6 +388,7 @@ async function prepareCronJobUpdateForGateway(
     }
     resolvedAuthority = await params.resolveCreatorToolAuthority({
       signal: params.operationSignal,
+      toolsAllow: readExplicitFiniteCronToolsAllow(params.patch.payload),
     });
     params.operationSignal?.throwIfAborted();
     finalPlan = planCronJobUpdatePatch({
@@ -428,9 +430,7 @@ export async function updateCronJobFromAgentTool(params: {
   adminManagement?: boolean;
   creatorToolAllowlist: readonly CronCreatorToolAllowlistEntry[] | undefined;
   creatorToolAllowlistCaptureRef?: CronToolsAllowCaptureRef;
-  resolveCreatorToolAuthority?: (options?: {
-    signal?: AbortSignal;
-  }) => Promise<CronCreatorToolAuthoritySnapshot>;
+  resolveCreatorToolAuthority?: CronToolOptions["resolveCreatorToolAuthority"];
   withCreatorAuthorityProvenance?: <T>(
     authority: CronCreatorToolAuthoritySnapshot,
     run: () => Promise<T>,
@@ -445,10 +445,10 @@ export async function updateCronJobFromAgentTool(params: {
 }): Promise<unknown> {
   const callerIncludedPayloadPatch = isRecord(params.patch.payload);
   let creatorAuthorityPromise: Promise<CronCreatorToolAuthoritySnapshot> | undefined;
-  const resolveCreatorToolAuthority = params.resolveCreatorToolAuthority
-    ? (options?: { signal?: AbortSignal }) =>
-        (creatorAuthorityPromise ??= params.resolveCreatorToolAuthority!(options))
-    : undefined;
+  const resolveCreatorToolAuthority: CronToolOptions["resolveCreatorToolAuthority"] =
+    params.resolveCreatorToolAuthority
+      ? (options) => (creatorAuthorityPromise ??= params.resolveCreatorToolAuthority!(options))
+      : undefined;
   for (let attempt = 0; attempt < 2; attempt += 1) {
     params.operationSignal?.throwIfAborted();
     const prepared = await prepareCronJobUpdateForGateway({

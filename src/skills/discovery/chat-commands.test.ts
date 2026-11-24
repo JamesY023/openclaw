@@ -47,9 +47,9 @@ async function workspace(name: string) {
   return dir;
 }
 
-// mock-isolation: Skill discovery uses an empty built-in registry to isolate skill filtering and naming.
+// mock-isolation: Keep skill discovery independent of the real built-in catalog.
 vi.mock("../../auto-reply/commands-registry.data.js", () => ({
-  listReservedChatSlashCommandNames: () => new Set<string>(),
+  listReservedChatSlashCommandNames: () => new Set(["fixture-built-in"]),
 }));
 
 vi.mock("./command-specs.js", async (importOriginal) => {
@@ -99,6 +99,25 @@ beforeEach(() => {
 });
 
 describe("skill commands", () => {
+  it("resolves a direct alias with arguments and reserves built-in names", () => {
+    const skillCommands = [
+      makeCommand("demo_skill_2", "demo-skill"),
+      makeCommand("fixture_builtin_2", "fixture-built-in"),
+    ];
+    expect(
+      resolveSkillCommandInvocation({
+        commandBodyNormalized: "/demo-skill first line\nsecond line",
+        skillCommands,
+      }),
+    ).toMatchObject({ command: skillCommands[0], args: "first line\nsecond line" });
+    expect(
+      resolveSkillCommandInvocation({
+        commandBodyNormalized: "/fixture-built-in",
+        skillCommands,
+      }),
+    ).toBeNull();
+  });
+
   it("preserves multiline args for /skill invocations", () => {
     const invocation = resolveSkillCommandInvocation({
       commandBodyNormalized: "/skill demo_skill first line\nsecond line",

@@ -1514,6 +1514,10 @@ describe("shared Codex app-server client", () => {
       } else {
         expect(managedStartOptionsCall().command).toBe("codex");
         expect(managedStartOptionsCall().commandSource).toBe("managed");
+        expect(mocks.resolveManagedCodexAppServerStartOptions).toHaveBeenCalledWith(
+          expect.objectContaining({ commandSource: "managed" }),
+          expect.objectContaining({ preferInstalled: false }),
+        );
         expect(bridgeCall.startOptions.command).toBe("/cache/openclaw/codex");
         expect(bridgeCall.startOptions.commandSource).toBe("resolved-managed");
         expect(clientStartCall(startSpy).command).toBe("/cache/openclaw/codex");

@@ -318,6 +318,7 @@ async function resolveCodexAppServerClientStartContext(
   });
   const remainingMs = resolveRemainingAcquireTimeout(options?.timeoutMs ?? 0, startedAt);
   const managedStartOptions = await resolveManagedCodexAppServerStartOptions(agentStartOptions, {
+    preferInstalled: agentStartOptions.managedCommandOrder === "desktop-first",
     selectionTimeoutMs: remainingMs > 0 ? remainingMs / 2 : undefined,
   });
   // Preserve ordinary profile environment policy; only explicitly prepared

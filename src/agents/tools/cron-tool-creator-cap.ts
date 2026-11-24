@@ -258,15 +258,23 @@ function classifyExplicitToolsAllow(
     : "finite";
 }
 
+export function readExplicitFiniteCronToolsAllow(payload: unknown): string[] | undefined {
+  if (
+    !isRecord(payload) ||
+    !Array.isArray(payload.toolsAllow) ||
+    classifyExplicitToolsAllow(payload) !== "finite"
+  ) {
+    return undefined;
+  }
+  return payload.toolsAllow.filter((tool): tool is string => typeof tool === "string");
+}
+
 function explicitFiniteToolsNeedResolution(
   payload: Record<string, unknown> | undefined,
   creatorToolAllowlist: readonly CronCreatorToolAllowlistEntry[] | undefined,
 ): boolean {
-  if (classifyExplicitToolsAllow(payload) !== "finite") {
-    return false;
-  }
-  const toolsAllow = payload?.toolsAllow;
-  if (!Array.isArray(toolsAllow)) {
+  const toolsAllow = readExplicitFiniteCronToolsAllow(payload);
+  if (!toolsAllow) {
     return false;
   }
   const creatorNames = new Set(
@@ -274,9 +282,7 @@ function explicitFiniteToolsNeedResolution(
       tool.aliasName ? [tool.name, tool.aliasName] : [tool.name],
     ),
   );
-  return expandToolGroups(
-    toolsAllow.filter((entry): entry is string => typeof entry === "string"),
-  ).some((name) => !creatorNames.has(name));
+  return expandToolGroups(toolsAllow).some((name) => !creatorNames.has(name));
 }
 
 /** Whether an add needs the creator's complete authority rather than an explicit empty cap. */

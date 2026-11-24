@@ -262,6 +262,21 @@ describe("materializeStaticMcpToolsForHarnessRunCore", () => {
     await result?.dispose();
   });
 
+  it.each(["user-mail__inbox", "other__lookup"])(
+    "intersects the requested job MCP list with the live creator ceiling (%s)",
+    async (requested) => {
+      makeStaticRuntime("scoped-scheduled");
+      const result = await staticTools("scoped-scheduled", {
+        toolsAllow: ["user-mail__inbox"],
+        scopedToolsAllow: [requested],
+        autoApproveCodexAppServerApprovals: true,
+      });
+      expect(toolNames(result.tools)).toEqual(requested === "user-mail__inbox" ? [requested] : []);
+      expect(result.diagnosticNotice).toBeUndefined();
+      await result.dispose();
+    },
+  );
+
   it("gates interactive configured MCP before the original executor", async () => {
     const runtime = makeStaticRuntime("interactive");
     const callTool = vi.spyOn(runtime, "callTool");

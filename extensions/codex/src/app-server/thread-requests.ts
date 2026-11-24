@@ -440,6 +440,10 @@ export function buildCodexRuntimeThreadConfigForRun(
     mergeCodexThreadConfigs(config, webSearchConfig),
     options,
   );
+  const effectiveFeatures = options.nativeQuestionConfig?.config.features;
+  const cloudAppsAllowed =
+    baseConfig["features.apps"] !== false &&
+    !(isJsonObject(effectiveFeatures) && effectiveFeatures.apps === false);
   const runtimeConfig =
     mergeCodexThreadConfigs(
       baseConfig,
@@ -476,6 +480,7 @@ export function buildCodexRuntimeThreadConfigForRun(
             restrictedToolSurfaceMcpServerNames,
             Boolean(params.scheduledRuntimeAuthority) &&
               !isCodexResponsesOAuthRun(params) &&
+              cloudAppsAllowed &&
               params.requireWorkspaceOnly !== true,
           )
         : buildCodexRingZeroThreadConfigPatch(

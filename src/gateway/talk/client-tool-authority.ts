@@ -4,6 +4,7 @@ import { resolveAgentConfig } from "../../agents/agent-scope-config.js";
 import type { RunEmbeddedAgentParams } from "../../agents/embedded-agent-runner/run/params.js";
 import { resolveEmbeddedFullAccessState } from "../../agents/embedded-agent-runner/sandbox-info.js";
 import { resolveCommandAuthorization } from "../../auto-reply/command-auth.js";
+import { getCommandSenderAuthority } from "../../auto-reply/command-sender-authority.js";
 import { resolveReplyExecOverrides } from "../../auto-reply/reply/get-reply-exec-overrides.js";
 import { resolveElevatedPermissions } from "../../auto-reply/reply/reply-elevated.js";
 import { resolveInboundReplyToolAuthorityOverlay } from "../../auto-reply/reply/reply-tool-authority.js";
@@ -67,6 +68,14 @@ export function prepareTalkClientToolContext(params: {
     toolsAllow: params.authority.toolsAllow,
     disableTools: false,
   });
+  const ownerProfileId = params.config.plugins?.entries?.["skynet-jessica"]?.config?.ownerProfileId;
+  // Control UI callers keep their verified profile in the native authority.
+  const verifiedJessicaOwner =
+    params.agentId === "jessica" &&
+    senderIsOwner &&
+    typeof ownerProfileId === "string" &&
+    ownerProfileId.length > 0 &&
+    getCommandSenderAuthority(ctx)?.() === ownerProfileId;
   const elevated = resolveElevatedPermissions({
     cfg: params.config,
     agentId: params.agentId,
@@ -84,7 +93,9 @@ export function prepareTalkClientToolContext(params: {
   };
   const fullAccess = resolveEmbeddedFullAccessState({ execElevated: bashElevated });
   return {
-    toolAuthorityOverlay,
+    toolAuthorityOverlay: verifiedJessicaOwner
+      ? { ...toolAuthorityOverlay, senderId: ownerProfileId }
+      : toolAuthorityOverlay,
     execOverrides: resolveReplyExecOverrides({
       sessionEntry: params.sessionEntry,
       agentExecDefaults: resolveAgentConfig(params.config, params.agentId)?.tools?.exec,

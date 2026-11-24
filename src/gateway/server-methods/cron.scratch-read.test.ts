@@ -14,13 +14,46 @@ import {
   cronAccountPolicy,
   expectCronReply,
   createCronCallerClient as callerClient,
+  createCronJob,
   createCronTestContext,
   createCronTestInvoker,
+  expectResponseError,
 } from "./cron.validation.test-support.js";
 
 const { makeStorePath } = createCronStoreHarness({ prefix: "cron-scratch-read-" });
 const getRuntimeConfig = () => ({});
 const invokeCron = createCronTestInvoker(cronHandlers, getRuntimeConfig);
+
+it("binds scheduled scratch reads and revision checks to the signed current job", async () => {
+  const owner = { agentId: "ops", accountId: "work", sessionKey: "agent:ops:main" };
+  const job = createCronJob({
+    ...createHistoryJob(owner.agentId, owner.sessionKey),
+    owner,
+    scheduledToolPolicy: cronAccountPolicy(owner.sessionKey, owner.accountId),
+  });
+  const other = { ...job, id: "other-job" };
+  const context = createCronTestContext([job, other], getRuntimeConfig);
+  const sessionKey = `agent:ops:cron:${job.id}:run:fixture`;
+  const client = callerClient(owner.agentId, owner.accountId, sessionKey, job.id);
+  const inputs = { context, client };
+  const read = await invokeCron("cron.scratch.get", { id: job.id }, inputs);
+  expectCronReply(read.respond, expect.objectContaining({ currentRevision: 0 }), "once");
+  const denied = await invokeCron("cron.scratch.get", { id: other.id }, inputs);
+  expectResponseError(denied.respond, { messageIncludes: "Automation not found" });
+  const noRevision = await invokeCron(
+    "cron.scratch.set",
+    { id: job.id, content: "fixture" },
+    inputs,
+  );
+  expectResponseError(noRevision.respond, { messageIncludes: "require expectedRevision" });
+  expect(context.cron.writeScratch).not.toHaveBeenCalled();
+  const write = await invokeCron(
+    "cron.scratch.set",
+    { id: job.id, content: "fixture", expectedRevision: 0 },
+    inputs,
+  );
+  expectCronReply(write.respond, expect.objectContaining({ currentRevision: 1 }), "once");
+});
 
 it.each(["caller closes after read", "owner transfers before read"] as const)(
   "withholds private scratch when %s",

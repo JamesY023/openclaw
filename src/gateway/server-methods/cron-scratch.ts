@@ -17,6 +17,8 @@ import {
 } from "./cron-job-access.js";
 import type { GatewayRequestHandlers } from "./types.js";
 
+const scratchJobScope = { allowCurrentJob: true, currentJobOnly: true };
+
 export const cronScratchHandlers: GatewayRequestHandlers = {
   "cron.scratch.get": scopedCronJobHandler(
     "cron.scratch.get",
@@ -26,12 +28,15 @@ export const cronScratchHandlers: GatewayRequestHandlers = {
       const assertCurrent = () => {
         assertCronReadCurrent(options);
         const job = context.cron.getJob(jobId);
+        const callerScope = readCronCallerScope(client);
         if (
           !job ||
+          (callerScope?.currentJobId && callerScope.currentJobId !== jobId) ||
           !cronJobMatchesCallerScope({
             job,
-            callerScope: readCronCallerScope(client),
+            callerScope,
             defaultAgentId: context.cron.getDefaultAgentId(),
+            allowCurrentJob: true,
           })
         ) {
           throw new Error("Cron scratch owner changed before reply");
@@ -53,6 +58,7 @@ export const cronScratchHandlers: GatewayRequestHandlers = {
         undefined,
       );
     },
+    scratchJobScope,
   ),
   "cron.scratch.set": scopedCronJobHandler(
     "cron.scratch.set",
@@ -73,11 +79,19 @@ export const cronScratchHandlers: GatewayRequestHandlers = {
         respondInvalidCronParams(respond, "cron.scratch.set", operatorOnlyMessage);
         return;
       }
+      if (callerScope?.currentJobId && !Number.isSafeInteger(p.expectedRevision)) {
+        respondInvalidCronParams(
+          respond,
+          "cron.scratch.set",
+          "Scheduled scratch writes require expectedRevision",
+        );
+        return;
+      }
       try {
         const scopeGuard = resolveCronMutationCommitGuard(
           client,
           context,
-          { callerScope, jobId },
+          { callerScope, jobId, allowCurrentJob: true },
           { sessionMutationCommitGuard, hasCurrentClientAuthority },
         );
         const commitGuard = () => {
@@ -109,5 +123,6 @@ export const cronScratchHandlers: GatewayRequestHandlers = {
         respondInvalidCronParams(respond, "cron.scratch.set", formatErrorMessage(error));
       }
     },
+    scratchJobScope,
   ),
 };

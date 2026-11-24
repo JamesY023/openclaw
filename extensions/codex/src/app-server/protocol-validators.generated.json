@@ -21,19 +21,7 @@
               "properties": {
                 "email": { "anyOf": [{ "type": "string" }, { "type": "null" }] },
                 "planType": { "$ref": "#/definitions/PlanType" },
-                "type": { "enum": ["chatgpt"], "title": "ChatgptAccountType", "type": "string" },
-                "workspaceName": {
-                  "anyOf": [
-                    {
-                      "description": "Display name of the selected ChatGPT workspace, when available.",
-                      "type": "string"
-                    },
-                    {
-                      "description": "Display name of the selected ChatGPT workspace, when available.",
-                      "type": "null"
-                    }
-                  ]
-                }
+                "type": { "enum": ["chatgpt"], "title": "ChatgptAccountType", "type": "string" }
               },
               "required": ["email", "planType", "type"],
               "title": "ChatgptAccount",
@@ -50,15 +38,6 @@
               },
               "required": ["type"],
               "title": "AmazonBedrockAccount",
-              "type": "object"
-            },
-            {
-              "description": "Google Cloud Vertex AI with externally managed credentials.",
-              "properties": {
-                "type": { "enum": ["gcp"], "title": "GcpAccountType", "type": "string" }
-              },
-              "required": ["type"],
-              "title": "GcpAccount",
               "type": "object"
             }
           ]
@@ -93,88 +72,7 @@
           "type": "object"
         },
         "AgentMessageDelivery": { "enum": ["async"], "type": "string" },
-        "AgentMessageDisplay": {
-          "anyOf": [
-            {
-              "description": "How Chat should present a recovered answer.",
-              "oneOf": [
-                {
-                  "properties": {
-                    "annotation": {
-                      "anyOf": [{ "$ref": "#/definitions/AnswerAnnotation" }, { "type": "null" }]
-                    },
-                    "mode": { "enum": ["show"], "type": "string" },
-                    "trustedContacts": { "$ref": "#/definitions/TrustedContacts" },
-                    "version": { "enum": [1], "format": "uint8", "minimum": 0, "type": "integer" }
-                  },
-                  "required": ["mode", "trustedContacts", "version"],
-                  "type": "object"
-                },
-                {
-                  "properties": {
-                    "mode": { "enum": ["hide"], "type": "string" },
-                    "replacement": { "$ref": "#/definitions/AnswerReplacement" },
-                    "version": { "enum": [1], "format": "uint8", "minimum": 0, "type": "integer" }
-                  },
-                  "required": ["mode", "replacement", "version"],
-                  "type": "object"
-                },
-                {
-                  "properties": {
-                    "mode": { "enum": ["block"], "type": "string" },
-                    "reason": { "$ref": "#/definitions/BlockReason" },
-                    "version": { "enum": [1], "format": "uint8", "minimum": 0, "type": "integer" }
-                  },
-                  "required": ["mode", "reason", "version"],
-                  "type": "object"
-                }
-              ]
-            },
-            {
-              "type": "object",
-              "required": ["action"],
-              "properties": {
-                "action": { "type": "string" },
-                "blockType": { "anyOf": [{ "type": "string" }, { "type": "null" }] },
-                "checkTrustedContacts": { "anyOf": [{ "type": "boolean" }, { "type": "null" }] },
-                "cyberTrustedAccess": { "anyOf": [{ "type": "boolean" }, { "type": "null" }] }
-              }
-            }
-          ]
-        },
-        "AgentMessageModeration": {
-          "properties": {
-            "display": {
-              "anyOf": [{ "$ref": "#/definitions/AgentMessageDisplay" }, { "type": "null" }]
-            },
-            "moderated": { "type": "boolean" }
-          },
-          "required": ["moderated"],
-          "type": "object"
-        },
         "AgentPath": { "type": "string" },
-        "AnswerAnnotation": {
-          "oneOf": [
-            {
-              "properties": {
-                "kind": { "enum": ["wellbeingHelpline"], "type": "string" },
-                "subject": { "$ref": "#/definitions/HelplineSubject" }
-              },
-              "required": ["kind", "subject"],
-              "type": "object"
-            }
-          ]
-        },
-        "AnswerReplacement": {
-          "oneOf": [
-            {
-              "properties": { "kind": { "enum": ["wellbeingPromptHelpline"], "type": "string" } },
-              "required": ["kind"],
-              "title": "WellbeingPromptHelplineAnswerReplacement",
-              "type": "object"
-            }
-          ]
-        },
         "ApprovalsReviewer": {
           "description": "Configures who approval requests are routed to for review. Examples include sandbox escapes, blocked network access, MCP approval prompts, and ARC escalations. Defaults to `user`. `auto_review` uses a carefully prompted subagent to gather relevant context and apply a risk-based decision framework before approving or denying the request. The legacy value `guardian_subagent` is accepted for compatibility.",
           "enum": ["user", "auto_review", "guardian_subagent"],
@@ -217,30 +115,6 @@
           },
           "required": ["title"],
           "type": "object"
-        },
-        "BlockReason": {
-          "oneOf": [
-            {
-              "properties": {
-                "kind": { "enum": ["protection"], "type": "string" },
-                "protectionType": {
-                  "description": "Identifies the same moderation row that Chat writes on the live path.",
-                  "type": "string"
-                }
-              },
-              "required": ["kind", "protectionType"],
-              "type": "object"
-            },
-            {
-              "properties": {
-                "kind": { "enum": ["cyber"], "type": "string" },
-                "trustedAccess": { "anyOf": [{ "type": "boolean" }, { "type": "null" }] }
-              },
-              "required": ["kind"],
-              "title": "KindBlockReason",
-              "type": "object"
-            }
-          ]
         },
         "ByteRange": {
           "properties": {
@@ -353,8 +227,6 @@
                 "rateLimitExceeded",
                 "flexUnavailable",
                 "serverOverloaded",
-                "modelNotFound",
-                "policyCapacityUnavailable",
                 "cyberPolicy",
                 "misalignmentPolicyViolation",
                 "tooManyDenials",
@@ -365,11 +237,6 @@
                 "sandboxError",
                 "other"
               ],
-              "type": "string"
-            },
-            {
-              "description": "The workspace's inference hook explicitly denied this request.",
-              "enum": ["inferenceHookDenied"],
               "type": "string"
             },
             { "anyOf": [{ "type": "string" }, { "type": "object" }] }
@@ -719,29 +586,15 @@
               "type": "object"
             },
             {
-              "anyOf": [
-                {
-                  "properties": { "audio_url": { "type": "string" } },
-                  "required": ["audio_url"],
-                  "title": "AudioUrlFunctionCallOutputContentItem",
-                  "type": "object"
-                },
-                {
-                  "properties": { "file_id": { "type": "string" } },
-                  "required": ["file_id"],
-                  "title": "FileIdFunctionCallOutputContentItem",
-                  "type": "object"
-                }
-              ],
-              "description": "Inline audio data or an uploaded file loaded by the Responses API.",
               "properties": {
+                "audio_url": { "type": "string" },
                 "type": {
                   "enum": ["input_audio"],
                   "title": "InputAudioFunctionCallOutputContentItemType",
                   "type": "string"
                 }
               },
-              "required": ["type"],
+              "required": ["audio_url", "type"],
               "title": "InputAudioFunctionCallOutputContentItem",
               "type": "object"
             },
@@ -768,7 +621,6 @@
           },
           "type": "object"
         },
-        "HelplineSubject": { "enum": ["answer", "prompt"], "type": "string" },
         "HookPromptFragment": {
           "properties": { "hookRunId": { "type": "string" }, "text": { "type": "string" } },
           "required": ["hookRunId", "text"],
@@ -797,18 +649,6 @@
               "type": "object"
             }
           ]
-        },
-        "ImageGenerationInputImage": {
-          "description": "A local image file successfully read for this exact image-generation request.",
-          "properties": {
-            "path": { "$ref": "#/definitions/AbsolutePathBuf" },
-            "sha256": {
-              "description": "Lowercase SHA-256 of the file bytes read before image normalization.",
-              "type": "string"
-            }
-          },
-          "required": ["path", "sha256"],
-          "type": "object"
         },
         "InputModality": {
           "description": "Canonical user-input modality tags advertised by a model.",
@@ -889,7 +729,7 @@
           "type": "object"
         },
         "MessagePhase": {
-          "description": "Classifies assistant text as commentary, a partial answer, or a terminal answer.\n\nProviders do not emit this consistently, so callers must treat `None` as \"phase unknown\" and keep compatibility behavior for legacy models.",
+          "description": "Classifies an assistant message as interim commentary or final answer text.\n\nProviders do not emit this consistently, so callers must treat `None` as \"phase unknown\" and keep compatibility behavior for legacy models.",
           "oneOf": [
             {
               "description": "Mid-turn assistant text (for example preamble/progress narration).\n\nAdditional tool calls or assistant output may follow before turn completion.",
@@ -897,12 +737,7 @@
               "type": "string"
             },
             {
-              "description": "Stable answer text that may be followed by more assistant output or tools.",
-              "enum": ["partial_answer"],
-              "type": "string"
-            },
-            {
-              "description": "The assistant's declared terminal answer text for the current turn.",
+              "description": "The assistant's terminal answer text for the current turn.",
               "enum": ["final_answer"],
               "type": "string"
             }
@@ -930,18 +765,6 @@
                 },
                 {
                   "description": "Open-ended classification; clients must accept categories added by Responses.",
-                  "type": "null"
-                }
-              ]
-            },
-            "reviewTarget": {
-              "anyOf": [
-                {
-                  "description": "Opaque server-issued block target. Presence alone does not enable target-based continuation.",
-                  "type": "string"
-                },
-                {
-                  "description": "Opaque server-issued block target. Presence alone does not enable target-based continuation.",
                   "type": "null"
                 }
               ]
@@ -1176,8 +999,6 @@
             "edu",
             "edu_plus",
             "edu_pro",
-            "sci",
-            "sci_plus",
             "unknown"
           ],
           "type": "string"
@@ -1383,18 +1204,6 @@
                 },
                 {
                   "description": "Optional role (agent_role) assigned to an AgentControl-spawned sub-agent.",
-                  "type": "null"
-                }
-              ]
-            },
-            "attachedToThreadId": {
-              "anyOf": [
-                {
-                  "description": "Parent that owns this persisted attached thread, independent of fork or spawn lineage.",
-                  "type": "string"
-                },
-                {
-                  "description": "Parent that owns this persisted attached thread, independent of fork or spawn lineage.",
                   "type": "null"
                 }
               ]
@@ -1657,7 +1466,6 @@
         "ThreadHistoryMode": { "enum": ["legacy", "paginated"], "type": "string" },
         "ThreadId": { "type": "string" },
         "ThreadItem": {
-          "description": "A thread item and its recorded lifecycle times. The payload stays flat on the wire.",
           "oneOf": [
             {
               "properties": {
@@ -1702,10 +1510,6 @@
                   "anyOf": [{ "$ref": "#/definitions/MemoryCitation" }, { "type": "null" }],
                   "default": null
                 },
-                "moderation": {
-                  "anyOf": [{ "$ref": "#/definitions/AgentMessageModeration" }, { "type": "null" }],
-                  "default": null
-                },
                 "phase": {
                   "anyOf": [{ "$ref": "#/definitions/MessagePhase" }, { "type": "null" }],
                   "default": null
@@ -1729,6 +1533,10 @@
                   "enum": ["agentMessage"],
                   "title": "AgentMessageThreadItemType",
                   "type": "string"
+                },
+                "moderation": {
+                  "anyOf": [{ "$ref": "#/definitions/AgentMessageModeration" }, { "type": "null" }],
+                  "default": null
                 }
               },
               "required": ["id", "text", "type"],
@@ -2082,22 +1890,6 @@
                 "agentThreadId": { "type": "string" },
                 "id": { "type": "string" },
                 "kind": { "$ref": "#/definitions/SubAgentActivityKind" },
-                "model": {
-                  "anyOf": [
-                    {
-                      "description": "Resolved model at sub-agent creation; absent from older records and other activities.",
-                      "type": "string"
-                    },
-                    {
-                      "description": "Resolved model at sub-agent creation; absent from older records and other activities.",
-                      "type": "null"
-                    }
-                  ]
-                },
-                "reasoningEffort": {
-                  "anyOf": [{ "$ref": "#/definitions/ReasoningEffort" }, { "type": "null" }],
-                  "description": "Resolved reasoning effort at sub-agent creation, when known."
-                },
                 "type": {
                   "enum": ["subAgentActivity"],
                   "title": "SubAgentActivityThreadItemType",
@@ -2167,46 +1959,13 @@
               "type": "object"
             },
             {
-              "anyOf": [
-                {
-                  "properties": { "fileId": { "type": "string" } },
-                  "required": ["fileId"],
-                  "title": "FileIdThreadItem",
-                  "type": "object"
-                },
-                {
-                  "properties": { "result": { "type": "string" } },
-                  "required": ["result"],
-                  "title": "ResultThreadItem",
-                  "type": "object"
-                }
-              ],
-              "description": "Either inline generated-image data or its durable attachment-store identity.\n\n`File` must remain first so rollouts written during the migration, which contain both an empty `result` and a `fileId`, retain the file reference when deserialized.",
               "properties": {
                 "failure": {
                   "anyOf": [{ "$ref": "#/definitions/ImageGenerationFailure" }, { "type": "null" }],
                   "default": null
                 },
-                "generationId": {
-                  "anyOf": [
-                    {
-                      "default": null,
-                      "description": "Image generation identifier for the generated image, when provided by the image backend.",
-                      "type": "string"
-                    },
-                    {
-                      "default": null,
-                      "description": "Image generation identifier for the generated image, when provided by the image backend.",
-                      "type": "null"
-                    }
-                  ]
-                },
                 "id": { "type": "string" },
-                "inputImages": {
-                  "description": "Observed local inputs for a completed generation, absent on older items.",
-                  "items": { "$ref": "#/definitions/ImageGenerationInputImage" },
-                  "type": "array"
-                },
+                "result": { "type": "string" },
                 "revisedPrompt": { "anyOf": [{ "type": "string" }, { "type": "null" }] },
                 "savedPath": {
                   "anyOf": [{ "$ref": "#/definitions/AbsolutePathBuf" }, { "type": "null" }]
@@ -2224,7 +1983,7 @@
                   "type": "string"
                 }
               },
-              "required": ["id", "status", "type"],
+              "required": ["id", "result", "status", "type"],
               "title": "ImageGenerationThreadItem",
               "type": "object"
             },
@@ -2269,42 +2028,7 @@
               "title": "ContextCompactionThreadItem",
               "type": "object"
             }
-          ],
-          "properties": {
-            "completedAtMs": {
-              "anyOf": [
-                {
-                  "default": null,
-                  "description": "Unix timestamp in milliseconds when the item completed, if recorded.",
-                  "format": "int64",
-                  "type": "integer"
-                },
-                {
-                  "default": null,
-                  "description": "Unix timestamp in milliseconds when the item completed, if recorded.",
-                  "format": "int64",
-                  "type": "null"
-                }
-              ]
-            },
-            "startedAtMs": {
-              "anyOf": [
-                {
-                  "default": null,
-                  "description": "Unix timestamp in milliseconds when the item started, if recorded.",
-                  "format": "int64",
-                  "type": "integer"
-                },
-                {
-                  "default": null,
-                  "description": "Unix timestamp in milliseconds when the item started, if recorded.",
-                  "format": "int64",
-                  "type": "null"
-                }
-              ]
-            }
-          },
-          "type": "object"
+          ]
         },
         "ThreadSection": {
           "description": "An independently persisted, user-visible thread section.",
@@ -2380,7 +2104,6 @@
             }
           ]
         },
-        "TrustedContacts": { "enum": ["check", "skip"], "type": "string" },
         "Turn": {
           "properties": {
             "completedAt": {
@@ -2428,18 +2151,6 @@
               "allOf": [{ "$ref": "#/definitions/TurnItemsView" }],
               "default": "full",
               "description": "Describes how much of `items` has been loaded for this turn."
-            },
-            "rootTurnId": {
-              "anyOf": [
-                {
-                  "description": "ID of the first turn in the chain of work that led to this turn. Pass this as `rootTurnId` when starting work on behalf of this turn. May be null in older history or a `review/start` response.",
-                  "type": "string"
-                },
-                {
-                  "description": "ID of the first turn in the chain of work that led to this turn. Pass this as `rootTurnId` when starting work on behalf of this turn. May be null in older history or a `review/start` response.",
-                  "type": "null"
-                }
-              ]
             },
             "startedAt": {
               "anyOf": [
@@ -2574,24 +2285,11 @@
               "type": "object"
             },
             {
-              "anyOf": [
-                {
-                  "properties": { "url": { "type": "string" } },
-                  "required": ["url"],
-                  "title": "UrlUserInput",
-                  "type": "object"
-                },
-                {
-                  "properties": { "fileId": { "type": "string" } },
-                  "required": ["fileId"],
-                  "title": "FileIdUserInput",
-                  "type": "object"
-                }
-              ],
               "properties": {
-                "type": { "enum": ["audio"], "title": "AudioUserInputType", "type": "string" }
+                "type": { "enum": ["audio"], "title": "AudioUserInputType", "type": "string" },
+                "url": { "type": "string" }
               },
-              "required": ["type"],
+              "required": ["type", "url"],
               "title": "AudioUserInput",
               "type": "object"
             },
@@ -2696,7 +2394,114 @@
           },
           "required": ["accountRoutingOverride", "backendOrigin", "chatgptAccountId"],
           "type": "object"
-        }
+        },
+        "AgentMessageDisplay": {
+          "anyOf": [
+            {
+              "description": "How Chat should present a recovered answer.",
+              "oneOf": [
+                {
+                  "properties": {
+                    "annotation": {
+                      "anyOf": [{ "$ref": "#/definitions/AnswerAnnotation" }, { "type": "null" }]
+                    },
+                    "mode": { "enum": ["show"], "type": "string" },
+                    "trustedContacts": { "$ref": "#/definitions/TrustedContacts" },
+                    "version": { "enum": [1], "format": "uint8", "minimum": 0, "type": "integer" }
+                  },
+                  "required": ["mode", "trustedContacts", "version"],
+                  "type": "object"
+                },
+                {
+                  "properties": {
+                    "mode": { "enum": ["hide"], "type": "string" },
+                    "replacement": { "$ref": "#/definitions/AnswerReplacement" },
+                    "version": { "enum": [1], "format": "uint8", "minimum": 0, "type": "integer" }
+                  },
+                  "required": ["mode", "replacement", "version"],
+                  "type": "object"
+                },
+                {
+                  "properties": {
+                    "mode": { "enum": ["block"], "type": "string" },
+                    "reason": { "$ref": "#/definitions/BlockReason" },
+                    "version": { "enum": [1], "format": "uint8", "minimum": 0, "type": "integer" }
+                  },
+                  "required": ["mode", "reason", "version"],
+                  "type": "object"
+                }
+              ]
+            },
+            {
+              "type": "object",
+              "required": ["action"],
+              "properties": {
+                "action": { "type": "string" },
+                "blockType": { "anyOf": [{ "type": "string" }, { "type": "null" }] },
+                "checkTrustedContacts": { "anyOf": [{ "type": "boolean" }, { "type": "null" }] },
+                "cyberTrustedAccess": { "anyOf": [{ "type": "boolean" }, { "type": "null" }] }
+              }
+            }
+          ]
+        },
+        "AgentMessageModeration": {
+          "properties": {
+            "display": {
+              "anyOf": [{ "$ref": "#/definitions/AgentMessageDisplay" }, { "type": "null" }]
+            },
+            "moderated": { "type": "boolean" }
+          },
+          "required": ["moderated"],
+          "type": "object"
+        },
+        "AnswerAnnotation": {
+          "oneOf": [
+            {
+              "properties": {
+                "kind": { "enum": ["wellbeingHelpline"], "type": "string" },
+                "subject": { "$ref": "#/definitions/HelplineSubject" }
+              },
+              "required": ["kind", "subject"],
+              "type": "object"
+            }
+          ]
+        },
+        "AnswerReplacement": {
+          "oneOf": [
+            {
+              "properties": { "kind": { "enum": ["wellbeingPromptHelpline"], "type": "string" } },
+              "required": ["kind"],
+              "title": "WellbeingPromptHelplineAnswerReplacement",
+              "type": "object"
+            }
+          ]
+        },
+        "BlockReason": {
+          "oneOf": [
+            {
+              "properties": {
+                "kind": { "enum": ["protection"], "type": "string" },
+                "protectionType": {
+                  "description": "Identifies the same moderation row that Chat writes on the live path.",
+                  "type": "string"
+                }
+              },
+              "required": ["kind", "protectionType"],
+              "type": "object"
+            },
+            {
+              "properties": {
+                "kind": { "enum": ["cyber"], "type": "string" },
+                "trustedAccess": { "anyOf": [{ "type": "boolean" }, { "type": "null" }] }
+              },
+              "required": ["kind"],
+              "title": "KindBlockReason",
+              "type": "object"
+            }
+          ]
+        },
+        "HelplineSubject": { "enum": ["answer", "prompt"], "type": "string" },
+        "TrustedContacts": { "enum": ["check", "skip"], "type": "string" }
       },
       "title": "CodexAppServerProtocolDefinitions",
       "type": "object",

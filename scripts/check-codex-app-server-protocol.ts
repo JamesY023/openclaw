@@ -379,7 +379,11 @@ declare const generatedDynamicToolCallParams: Omit<DynamicToolCallParams, "argum
 const openClawDynamicToolCallParams: Omit<CodexDynamicToolCallParams, "arguments"> =
   generatedDynamicToolCallParams;
 declare const generatedErrorNotification: ErrorNotification;
-const openClawErrorNotification: CodexErrorNotification = generatedErrorNotification;
+// 0.161 types unknown keys in open error variants. The bridge receives JSON
+// and its schema validator binds this field before projecting it.
+const openClawErrorNotification: Omit<CodexErrorNotification, "error"> & {
+  error: Omit<CodexErrorNotification["error"], "codexErrorInfo">;
+} = generatedErrorNotification;
 declare const generatedGetAccountResponse: GetAccountResponse;
 const openClawGetAccountResponse: CodexGetAccountResponse = generatedGetAccountResponse;
 declare const generatedModelListResponse: ModelListResponse;
@@ -388,11 +392,7 @@ declare const generatedMcpResourceReadResponse: McpResourceReadResponse;
 const openClawMcpResourceReadResponse: CodexAppServerRequestResult<"mcpServer/resource/read"> =
   generatedMcpResourceReadResponse;
 declare const generatedStrictReviewRequiredNotification: StrictReviewRequiredNotification;
-type OpenClawStrictReviewRequiredNotification = Extract<
-  CodexServerNotification,
-  { method: "autoApprovalReview/strictReviewRequired" }
->;
-const openClawStrictReviewRequiredNotification: OpenClawStrictReviewRequiredNotification = {
+const openClawStrictReviewRequiredNotification: CodexServerNotification = {
   method: "autoApprovalReview/strictReviewRequired",
   params: generatedStrictReviewRequiredNotification,
 };
