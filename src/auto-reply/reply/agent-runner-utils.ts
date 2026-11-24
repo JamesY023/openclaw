@@ -40,6 +40,7 @@ import type { PluginHookAgentContext } from "../../plugins/hook-types.js";
 import { readUserTurnPromptReactionSource } from "../../sessions/user-turn-transcript-admission.js";
 import { isInternalMessageChannel } from "../../utils/message-channel.js";
 import { isReasoningTagProvider } from "../../utils/provider-utils.js";
+import { getTalkToolSenderAuthority } from "../command-sender-authority.js";
 import type { TemplateContext } from "../templating.js";
 import { resolveRunAuthProfile } from "./agent-runner-auth-profile.js";
 import type { AgentTurnParams } from "./agent-runner-execution.types.js";
@@ -472,10 +473,14 @@ export async function buildEmbeddedRunExecutionParams(params: {
       }));
   const modelHasVision = await resolveRunModelHasVision(params);
   automation?.assertCurrent();
+  const talkToolSender = params.run.senderIsOwner
+    ? getTalkToolSenderAuthority(params.run)?.()
+    : undefined;
   // Runtime policy keys may differ from session keys for direct-message scoped policy.
   return {
     ...embeddedContext,
     ...senderContext,
+    senderId: talkToolSender ?? senderContext.senderId,
     ...buildReplyRunStateParams(params.run),
     providerReviewAcknowledgment: params.run.providerReviewAcknowledgment,
     permissionMode: params.run.permissionMode,

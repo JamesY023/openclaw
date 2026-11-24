@@ -2616,10 +2616,12 @@ describe("talk.client.toolCall handler", () => {
         },
       };
       const config = {
+        agents: { list: [{ id: "jessica", default: true }] },
         plugins: { entries: { "skynet-jessica": { config: { ownerProfileId: "owner-profile" } } } },
       };
       expect(getTalkToolSenderAuthority(resolveChatSendCallerContext(client))).toBeUndefined();
       let forwardedClient: GatewayClient | null | undefined;
+      const respond = vi.fn();
       mocks.chatSend.mockImplementationOnce(async (request: GatewayRequestHandlerOptions) => {
         forwardedClient = request.client;
         request.respond(true, { runId: "run-voice-1" }, undefined);
@@ -2632,9 +2634,10 @@ describe("talk.client.toolCall handler", () => {
           args: { question: "Check status" },
         },
         client,
-        respond: vi.fn(),
+        respond,
         context: { getRuntimeConfig: () => config },
       });
+      expectRespondOk(respond, { runId: "run-voice-1" });
       const copiedClient = expectDefined(forwardedClient, "Talk consult must dispatch its client");
       const context = resolveChatSendCallerContext(copiedClient);
       const sender = getTalkToolSenderAuthority(context);

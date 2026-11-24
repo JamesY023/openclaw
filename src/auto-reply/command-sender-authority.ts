@@ -33,3 +33,10 @@ export function getTalkToolSenderAuthority(
 ): CommandSenderAuthority | undefined {
   return (context as CommandSenderContext | null | undefined)?.[TALK_TOOL_SENDER_AUTHORITY];
 }
+
+export function copyTalkToolSenderAuthority(source: object, target: object): void {
+  const authority = getTalkToolSenderAuthority(source);
+  if (authority) {
+    (target as CommandSenderContext)[TALK_TOOL_SENDER_AUTHORITY] = authority;
+  }
+}

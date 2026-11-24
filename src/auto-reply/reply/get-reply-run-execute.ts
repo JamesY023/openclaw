@@ -39,7 +39,7 @@ import {
 import { buildChannelUserTurnSender } from "../../sessions/user-turn-transcript.metadata.js";
 import { isReasoningTagProvider } from "../../utils/provider-utils.js";
 import { bindCommandOwnerAuthority, getCommandOwnerAuthority } from "../command-owner-authority.js";
-import { getTalkToolSenderAuthority } from "../command-sender-authority.js";
+import { copyTalkToolSenderAuthority } from "../command-sender-authority.js";
 import { getGroupThreadTurn } from "../group-thread-context.js";
 import { getRequesterProfile } from "../requester-profile.js";
 import type { OriginatingChannelType } from "../templating.js";
@@ -515,9 +515,7 @@ export async function executePreparedReplyRun(
       memberRoleIds: normalizeArrayBackedTrimmedStringList(sessionCtx.MemberRoleIds),
       // Parent lineage authenticates inherited group policy for queued CLI/MCP runs.
       spawnedBy: normalizeOptionalString(preparedSessionState.sessionEntry?.spawnedBy),
-      senderId:
-        (command.senderIsOwner ? getTalkToolSenderAuthority(ctx)?.() : undefined) ??
-        normalizeOptionalString(sessionCtx.SenderId),
+      senderId: normalizeOptionalString(sessionCtx.SenderId),
       channelContext: ctx.ChannelContext ?? sessionCtx.ChannelContext,
       senderName: normalizeOptionalString(sessionCtx.SenderName),
       senderUsername: normalizeOptionalString(sessionCtx.SenderUsername),
@@ -631,6 +629,9 @@ export async function executePreparedReplyRun(
   };
   const sourceReplyDeliveryRuntimeOptions = opts as SourceReplyDeliveryRuntimeOptions | undefined;
   copyChildSessionPublication(sessionCtx, followupRun.run);
+  if (command.senderIsOwner) {
+    copyTalkToolSenderAuthority(ctx, followupRun.run);
+  }
   if (command.senderIsOwner && channelOwnerAuthority) {
     bindCommandOwnerAuthority(followupRun.run, channelOwnerAuthority);
   }

@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ChannelThreadingAdapter } from "../../channels/plugins/types.public.js";
+import { copyTalkToolSenderAuthority, withCommandSenderAuthority } from "../command-sender-authority.js";
 import type { FollowupRun } from "./queue.js";
 
 type ThreadingParams = Parameters<NonNullable<ChannelThreadingAdapter["buildToolContext"]>>[0];
@@ -78,6 +79,25 @@ function buildExecution(params: Partial<Parameters<typeof buildEmbeddedRunExecut
     ...params,
   });
 }
+
+it("projects only the current hosted Talk owner into immediate embedded tool hooks", async () => {
+  let currentOwner: string | undefined = "fixture-owner";
+  const verifiedInput = withCommandSenderAuthority({}, () => currentOwner, () => currentOwner);
+  const ownerRun = makeRun({ senderIsOwner: true });
+  copyTalkToolSenderAuthority(verifiedInput, ownerRun);
+  expect((await buildExecution({ run: ownerRun })).senderId).toBe("fixture-owner");
+
+  const nonOwnerRun = makeRun({ senderIsOwner: false });
+  copyTalkToolSenderAuthority(verifiedInput, nonOwnerRun);
+  expect((await buildExecution({ run: nonOwnerRun })).senderId).toBeUndefined();
+  expect((await buildExecution({
+    run: makeRun({ senderIsOwner: true }),
+    sessionCtx: { SenderId: "ordinary-sender" },
+  })).senderId).toBe("ordinary-sender");
+
+  currentOwner = undefined;
+  expect((await buildExecution({ run: ownerRun })).senderId).toBeUndefined();
+});
 
 describe("agent-runner-utils", () => {
   beforeEach(() => {
