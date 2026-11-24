@@ -43,32 +43,43 @@ export async function logGatewaySidecarsReady(
 
 export function createGatewayReadyAnnouncer(
   params: GatewayReadinessLog & {
+    log: GatewayReadinessLog["log"] & { warn: (message: string) => void };
     isChatSendAvailable: () => boolean;
     areSidecarsReady: () => boolean;
     startupTrace: GatewayStartupTrace;
   },
 ): () => Promise<void> {
-  let readyAnnounced = false;
+  const canAnnounce = () =>
+    !params.isClosing?.() && params.isChatSendAvailable() && params.areSidecarsReady();
+  let started = false;
   return async () => {
-    if (
-      readyAnnounced ||
-      params.isClosing?.() ||
-      !params.isChatSendAvailable() ||
-      !params.areSidecarsReady()
-    ) {
+    if (started || !canAnnounce()) {
       return;
     }
-    const prepared = await params.getReadiness.prepare();
-    if (
-      !readyAnnounced &&
-      params.isChatSendAvailable() &&
-      params.areSidecarsReady() &&
-      !params.isClosing?.() &&
-      prepared.publish().ready
-    ) {
-      readyAnnounced = true;
-      params.startupTrace.mark("ready");
-      writeReadyLog(params.log);
-    }
+    started = true;
+    const retryDelayMs = 1_000;
+    const deadline = performance.now() + 180_000;
+    const observe = async (): Promise<void> => {
+      if (!canAnnounce() || performance.now() >= deadline) {
+        return;
+      }
+      const prepared = await params.getReadiness.prepare();
+      if (!canAnnounce() || performance.now() >= deadline) {
+        return;
+      }
+      if (prepared.publish().ready) {
+        params.startupTrace.mark("ready");
+        writeReadyLog(params.log);
+        return;
+      }
+      // Admission can finish after chat unlocks. Observe that transition without
+      // delaying startup observers or keeping a closing gateway alive.
+      if (performance.now() + retryDelayMs < deadline) {
+        setTimeout(() => {
+          void observe().catch(() => params.log.warn("Gateway startup readiness recheck failed"));
+        }, retryDelayMs).unref();
+      }
+    };
+    await observe();
   };
 }
