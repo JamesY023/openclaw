@@ -421,6 +421,21 @@ export function broadcastToOwner(
   event: TalkRealtimeRelayEvent,
   talkEvent?: TalkEventInput,
 ): void {
+  if (event.type === "ready" || event.type === "error" || event.type === "close") {
+    const [relaySessionId, connId] = [session.id, session.connId].map((value) =>
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value)
+        ? value
+        : "unknown",
+    );
+    // The journal carries the relay lifecycle and its IDs. Provider payloads stay on the relay.
+    const detail =
+      event.type === "close"
+        ? ` reason=${event.reason === "completed" || event.reason === "error" ? event.reason : "unknown"}`
+        : "";
+    session.context.logGateway?.[event.type === "error" ? "warn" : "info"]?.(
+      `[talk-relay] ${event.type} relaySessionId=${relaySessionId} connId=${connId}${detail}`,
+    );
+  }
   const payload = {
     relaySessionId: session.id,
     ...event,
