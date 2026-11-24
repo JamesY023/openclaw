@@ -361,6 +361,7 @@ async function requestPluginToolApprovalDecision(
     const requestResult: {
       id?: string;
       decision?: unknown;
+      terminalReason?: string;
       deliveryRoute?: string;
       expiresAtMs?: number;
     } = await withGatewayToolApprovalOwner(
@@ -401,7 +402,7 @@ async function requestPluginToolApprovalDecision(
     let decision: unknown;
     if (hasImmediateDecision) {
       decision = requestResult?.decision;
-      if (decision === null) {
+      if (decision === null && requestResult.terminalReason !== "timeout") {
         notifyPluginApprovalResolution(approval, PluginApprovalResolutions.CANCELLED);
         return pluginApprovalFailure(
           params.baseParams,

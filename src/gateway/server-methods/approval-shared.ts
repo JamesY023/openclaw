@@ -310,11 +310,16 @@ export async function handlePendingApprovalRequest<
       }
     }
     projectedDecision = params.manager.projectDecisionIfActive(params.record.id, projectedDecision);
+    const timedOut =
+      params.approvalKind === "plugin" &&
+      projectedDecision === null &&
+      params.manager.getLocalSnapshot(params.record.id)?.terminalReason === "timeout";
     params.respond(
       true,
       {
         id: params.record.id,
         decision: projectedDecision,
+        ...(timedOut ? { terminalReason: "timeout" } : {}),
         createdAtMs: params.record.createdAtMs,
         expiresAtMs: params.record.expiresAtMs,
       },

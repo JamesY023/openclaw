@@ -381,7 +381,7 @@ describe("createPluginApprovalHandlers", () => {
 
     it("sends an iOS cleanup wake when a plugin request expires", async () => {
       const handleExpired = vi.fn(async () => {});
-      const { pending, id } = await startRequest(
+      const { respond, pending, id } = await startRequest(
         {},
         { context: createApprovalContext(() => false) },
         createPluginApprovalHandlers(manager, {
@@ -391,6 +391,11 @@ describe("createPluginApprovalHandlers", () => {
       await manager.expire(id, "timeout");
       await pending;
 
+      expect(expectResponseOk(respond, 1)).toMatchObject({
+        id,
+        decision: null,
+        terminalReason: "timeout",
+      });
       expect(handleExpired).toHaveBeenCalledTimes(1);
       expect(
         requireRecord(mockCall(handleExpired, 0, "expired push")[0], "expired request").id,
