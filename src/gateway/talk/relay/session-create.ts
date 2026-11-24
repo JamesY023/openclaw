@@ -241,7 +241,12 @@ export function createTalkRealtimeRelaySession(
     onOutputOwnership: (owner) => {
       const relay = getActiveRelay();
       if (owner === "host" && params.hostOwnedOutput && params.provider.id === "openai" && relay) {
-        relay.ownedOutput ??= { inputTurns: new Set(), generation: 0, finals: new Map() };
+        relay.ownedOutput ??= {
+          inputTurns: new Set(),
+          generation: 0,
+          finals: new Map(),
+          retiredMarks: new Set(),
+        };
       }
     },
     capabilities: params.capabilities,

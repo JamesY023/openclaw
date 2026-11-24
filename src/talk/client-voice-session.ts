@@ -582,13 +582,19 @@ export function appendOwnedRelayVoiceTranscript(
   input: Omit<
     Parameters<typeof appendRelayVoiceTranscript>[0],
     "role" | "entryId" | "providerOwned"
-  >,
+  > & { physicalSource?: ClientVoiceSessionSource },
   playback: OwnedRelayPlayback & { assertCurrent: () => void },
   retainedWriter?: ClientVoiceSessionWriter,
 ): Promise<void> {
   const params = { ...input, sessionTarget: { ...input.sessionTarget }, text: input.text.trim() };
-  const { assertCurrent: assertPlayback, consultRunId, terminalMessageId, playbackId } = playback;
-  if (!consultRunId.trim() || !terminalMessageId.trim() || !playbackId.trim()) {
+  const { assertCurrent: assertPlayback, ...owned } = playback;
+  const { consultRunId, terminalMessageId, playbackId, sessionId, lifecycleRevision } = owned;
+  if (
+    !consultRunId.trim() ||
+    !terminalMessageId.trim() ||
+    !playbackId.trim() ||
+    !sessionId.trim()
+  ) {
     return Promise.reject(new Error("owned voice replacement requires complete causal identity"));
   }
   if (!params.text || params.text.length > VOICE_TRANSCRIPT_QUEUE_POLICY.maxEntryChars) {
@@ -640,15 +646,15 @@ export function appendOwnedRelayVoiceTranscript(
               env: writer.options.env,
             };
             const entry = await readSessionEntryReadOnlyInWorker(target, assertTranscriptCurrent);
-            if (!entry?.sessionId) {
-              throw new Error("owned voice replacement lost its consult session");
+            if (entry?.sessionId !== sessionId || entry.lifecycleRevision !== lifecycleRevision) {
+              throw new Error("owned voice replacement lost its consult incarnation");
             }
             const record = (await writer.read(params.voiceSessionId))?.record;
             if (!record) {
               throw new Error("owned voice replacement lost its consult session");
             }
             const timestamp = params.timestamp ?? Date.now();
-            const transcript = { ...target, sessionId: entry.sessionId };
+            const transcript = { ...target, sessionId };
             const message = buildPersistedVoiceMessage({
               role: "assistant",
               text: params.text,
@@ -659,9 +665,9 @@ export function appendOwnedRelayVoiceTranscript(
             const turn = await appendExpectedSessionTranscriptTurn(transcript, {
               config: params.config,
               keyFormat: "agent-qualified",
-              expectedSessionId: entry.sessionId,
-              selectedSessionId: entry.sessionId,
-              selectedLifecycleRevision: entry.lifecycleRevision,
+              expectedSessionId: sessionId,
+              selectedSessionId: sessionId,
+              selectedLifecycleRevision: lifecycleRevision ?? null,
               sessionFile: target.sessionKey,
               assertCurrent: assertTranscriptCurrent,
               messages: [
@@ -683,7 +689,7 @@ export function appendOwnedRelayVoiceTranscript(
                 agentId: params.agentId,
                 sessionKey: params.sessionKey,
                 voiceSessionId: params.voiceSessionId,
-                owned: { consultRunId, terminalMessageId, playbackId },
+                owned,
               },
             });
             const appended = turn.appendedMessages[0];

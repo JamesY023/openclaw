@@ -38,6 +38,7 @@ function assertCurrentPlayback(session: RelaySession, playback: OwnedTalkPlaybac
     throw new Error("Owned Talk playback no longer belongs to the current call");
   }
   session.runAuthority?.assertCurrent();
+  playback.final.physicalSource.assertCurrent();
   session.sessionTarget.assertCurrent(session.context.getRuntimeConfig());
 }
 
@@ -73,13 +74,16 @@ export function deliverOwnedTalkResult(
 ): void {
   const output = session.ownedOutput;
   const { runId, sessionId, lifecycleRevision } = final;
-  if (!output || output.playback?.runId === runId) {
+  if (!output || output.playback?.final.runId === runId) {
     return;
   }
   cancelOwnedTalkPlayback(session);
+  if (output.playback) {
+    output.retiredMarks.add(output.playback.markName);
+  }
   const playback: OwnedTalkPlayback = {
     turnId,
-    runId,
+    final,
     epoch: session.toolResultEpoch,
     phase: "preparing",
     markName: `${OWNED_MARK_PREFIX}${randomUUID()}`,
@@ -88,7 +92,7 @@ export function deliverOwnedTalkResult(
   output.playback = playback;
   const assertCurrent = () => assertCurrentPlayback(session, playback);
   const { agentId, canonicalKey: sessionKey, storePath } = session.sessionTarget;
-  const target = { agentId, sessionKey, storePath };
+  const target = { agentId, sessionKey, storePath, env: final.physicalSource.options.env };
   const assertIncarnation = () =>
     withSessionEntryReadOnlyInWorker(target, assertCurrent, async (read) => {
       if (!read.ok) throw read.error;
@@ -167,7 +171,7 @@ export function deliverOwnedTalkResult(
     playback.phase = "awaiting";
     broadcastToOwner(
       session,
-      { type: "audioDone" },
+      { type: "audioDone", outputOwnership: "host" },
       { type: "output.audio.done", turnId, payload: {}, final: true },
     );
     broadcastToOwner(
@@ -197,11 +201,14 @@ export async function acknowledgeOwnedTalkPlayback(
   outcome?: OwnedTalkPlaybackOutcome,
 ): Promise<boolean> {
   if (!markName.startsWith(OWNED_MARK_PREFIX)) return false;
-  const playback = session.ownedOutput?.playback;
+  const output = session.ownedOutput;
+  const playback = output?.playback;
+  if (output?.retiredMarks.has(markName)) return true;
   if (!playback || playback.markName !== markName)
     throw new Error("Owned Talk playback mark is no longer current");
   if (!outcome) throw new Error("Owned Talk playback requires an explicit outcome");
   if (playback.phase === "completed") return true;
+  if (playback.controller.signal.aborted) return true;
   if (outcome !== "completed") {
     cancelOwnedTalkPlayback(session, playback.turnId);
     playback.phase = outcome;
@@ -220,11 +227,14 @@ export async function acknowledgeOwnedTalkPlayback(
       voiceSessionId: session.id,
       text,
       config: session.voiceConfig,
+      physicalSource: playback.final.physicalSource,
     },
     {
-      consultRunId: playback.runId,
+      consultRunId: playback.final.runId,
       terminalMessageId: messageId,
       playbackId: playback.markName,
+      sessionId: playback.final.sessionId,
+      lifecycleRevision: playback.final.lifecycleRevision,
       assertCurrent: () => assertCurrentPlayback(session, playback),
     },
   )

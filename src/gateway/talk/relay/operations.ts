@@ -239,6 +239,44 @@ function getRelaySession(relaySessionId: string, connId: string): RelaySession {
   });
 }
 
+/** The authenticated browser can acknowledge a host consult but cannot author its instruction. */
+export function bindOwnedTalkConsult(params: {
+  relaySessionId: string;
+  connId: string;
+  sessionKey: string;
+  callId: string;
+  question: string;
+}): (() => void) | undefined {
+  const relay = getRelaySession(params.relaySessionId, params.connId);
+  const owned = relay.ownedOutput;
+  if (!owned) return undefined;
+  const handle = relay.harness.forcedConsults.handles().find(({ id }) => id === params.callId);
+  const context = handle?.context as { generation?: number; turnId?: string } | undefined;
+  const epoch = relay.toolResultEpoch;
+  const assertCurrent = () => {
+    if (
+      getRelaySession(params.relaySessionId, params.connId) !== relay ||
+      relay.ownedOutput !== owned ||
+      relay.sessionTarget.canonicalKey !== params.sessionKey ||
+      relay.toolResultEpoch !== epoch ||
+      !handle ||
+      !context?.turnId ||
+      context.turnId !== relay.harness.talk.activeTurnId ||
+      context.generation !== owned.generation ||
+      handle.question !== params.question ||
+      !relay.harness.forcedConsults.handles().includes(handle) ||
+      relay.harness.forcedConsults.isCancelled(handle) ||
+      !relay.toolCalls.has(params.callId) ||
+      relay.toolCalls.hasCancelled(params.callId) ||
+      relay.toolCalls.isAgentCompleted(params.callId)
+    ) {
+      throw new Error("Talk consult does not match the current provider turn");
+    }
+  };
+  assertCurrent();
+  return assertCurrent;
+}
+
 export function sendTalkRealtimeRelayAudio(params: {
   relaySessionId: string;
   connId: string;

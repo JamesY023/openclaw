@@ -1,6 +1,9 @@
 import { isRecord } from "@openclaw/normalization-core/record-coerce";
 import { describe, expect, it, vi } from "vitest";
-import { appendTranscriptMessage } from "../config/sessions/session-accessor.js";
+import {
+  appendTranscriptMessage,
+  replaceSessionEntry,
+} from "../config/sessions/session-accessor.js";
 import { readSessionTranscriptMessageEvents } from "../config/sessions/session-accessor.sqlite-active-events.js";
 import { seedSession } from "./client-voice-session.fixture.test-support.js";
 import {
@@ -25,6 +28,7 @@ describe("completed relay playback", () => {
     consultRunId: "spoken-consult",
     terminalMessageId: "final-event",
     playbackId: "playback",
+    sessionId: scope.sessionId,
   };
   const owned = { ...ids, assertCurrent() {} };
 
@@ -90,6 +94,18 @@ describe("completed relay playback", () => {
         },
       },
     });
+  });
+
+  it("refuses an acknowledged final transplanted into the successor transcript", async () => {
+    const { original, params } = await fixture();
+    const successor = { ...scope, sessionId: "successor-session" };
+    await replaceSessionEntry(target, { sessionId: successor.sessionId, updatedAt: Date.now() });
+    await appendTranscriptMessage(successor, { eventId: ids.terminalMessageId, message: original });
+    await expect(appendOwnedRelayVoiceTranscript(params, owned)).rejects.toThrow(
+      /consult incarnation/,
+    );
+    expect(readSessionTranscriptMessageEvents(successor).map(({ event }) => event)).toHaveLength(1);
+    expect(readEvents().map((event) => event.message)).toEqual([original]);
   });
 
   it.each([

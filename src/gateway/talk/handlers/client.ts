@@ -79,6 +79,7 @@ import {
 } from "../client-tool-authority.js";
 import { createTalkRunCancel } from "../realtime-run-control.js";
 import {
+  bindOwnedTalkConsult,
   ensureTalkRealtimeRelayVoiceSession,
   flushTalkRealtimeRelayVoiceWrites,
   registerTalkRealtimeRelayAgentRun,
@@ -377,10 +378,24 @@ export const talkClientHandlers: GatewayRequestHandlers = {
       > => {
         let message: string;
         let question: string;
+        let assertOwnedConsultCurrent: (() => void) | undefined;
         try {
           const consultInput = parseRealtimeVoiceAgentConsultArgs(params.args ?? {});
           question = consultInput.question;
-          message = buildRealtimeVoiceAgentConsultChatMessage(consultInput);
+          if (relaySessionId && connId) {
+            assertOwnedConsultCurrent = bindOwnedTalkConsult({
+              relaySessionId,
+              connId,
+              sessionKey: target.canonicalKey,
+              callId: params.callId,
+              question,
+            });
+          }
+          message = buildRealtimeVoiceAgentConsultChatMessage(
+            assertOwnedConsultCurrent
+              ? { question, responseStyle: "Reply in a concise spoken tone." }
+              : consultInput,
+          );
         } catch (err) {
           return { ok: false, error: errorShape(ErrorCodes.INVALID_REQUEST, formatForLog(err)) };
         }
@@ -519,6 +534,7 @@ export const talkClientHandlers: GatewayRequestHandlers = {
               };
               try {
                 assertCurrent();
+                assertOwnedConsultCurrent?.();
                 if (relaySessionId && connId) {
                   if (!chat) {
                     throw new Error("Realtime relay agent run is not registered");
@@ -530,7 +546,10 @@ export const talkClientHandlers: GatewayRequestHandlers = {
                     runId,
                     callId: params.callId,
                     transcriptSessionId: getRpcSourceIdentity(chat).sessionId,
-                    assertCurrent: assertWorkAdmissionCurrent,
+                    assertCurrent: () => {
+                      assertWorkAdmissionCurrent();
+                      assertOwnedConsultCurrent?.();
+                    },
                     registerVoice: async (assertRelayCurrent, physicalSource, onRegistered) => {
                       await onRunStarted(runId, {
                         assertWorkAdmissionCurrent: assertRelayCurrent,

@@ -422,12 +422,12 @@ describe("GatewayRelayRealtimeTalkTransport", () => {
     "acknowledges owned playback only with its observed %s outcome",
     async (outcome) => {
       const { client, transport } = await startRelay();
-      relayEvent({ type: "ready", outputOwnership: "host" });
+      // The native ready event may precede the browser's subscription.
       const talkEvent = { turnId: "turn-1" };
       if (outcome !== "failed") {
-        emitAudio();
+        relayEvent({ type: "audio", audioBase64: "AAAA", outputOwnership: "host", talkEvent });
       }
-      relayEvent({ type: "audioDone", talkEvent });
+      relayEvent({ type: "audioDone", outputOwnership: "host", talkEvent });
       if (outcome === "cancelled") {
         relayEvent({ type: "clear", talkEvent });
       }

@@ -356,6 +356,16 @@ describe("voice consult registration authority", () => {
         args: call.args,
       };
       const client = { connId };
+      for (const refused of [
+        { ...params, callId: "unregistered-fixture-call" },
+        { ...params, args: { question: "A different fixture question" } },
+      ]) {
+        const { authorization } = await authorizeConsult(refused, context, client as never);
+        const rejected = toolCall(refused, context, authorization, client as never);
+        await rejected.pending;
+        expect(rejected.respond.mock.lastCall?.[0]).toBe(false);
+        expect(chat.dispatched).not.toHaveBeenCalled();
+      }
       const { authorization } = await authorizeConsult(params, context, client as never);
       const { pending, respond } = toolCall(params, context, authorization, client as never);
       await pending;

@@ -366,6 +366,7 @@ export class GatewayRelayRealtimeTalkTransport implements RealtimeTalkTransport 
           this.ctx.callbacks.onStatus?.("listening");
           return;
         case "audio":
+          if (event.outputOwnership === "host") this.hostOwnsOutput = true;
           if (event.audioBase64 && !this.playbackOverflowed) {
             const turnId = event.talkEvent?.turnId?.trim();
             if (!turnId) {
@@ -388,6 +389,7 @@ export class GatewayRelayRealtimeTalkTransport implements RealtimeTalkTransport 
           }
           return;
         case "audioDone":
+          if (event.outputOwnership === "host") this.hostOwnsOutput = true;
           if (this.hostOwnsOutput) {
             this.ownedOutput.done(event.talkEvent?.turnId);
           }
@@ -406,7 +408,7 @@ export class GatewayRelayRealtimeTalkTransport implements RealtimeTalkTransport 
           return;
         case "mark":
           if (event.markName) {
-            if (this.hostOwnsOutput) {
+            if (this.hostOwnsOutput || event.markName.startsWith("owned-talk:")) {
               this.ownedOutput.mark(event);
             } else {
               this.scheduleMarkAck(event.markName);

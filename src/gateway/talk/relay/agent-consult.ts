@@ -112,7 +112,7 @@ export function createRelayAgentRunRegistration(
     const chatSessionId = chat && getRpcSourceIdentity(chat).sessionId;
     const chatGeneration = chat && getRpcSourceLifecycleGeneration(chat);
     let installed = false;
-    let transcriptSession: { sessionId: string; lifecycleRevision?: string } | undefined;
+    let transcriptSession: Omit<import("./state.js").OwnedTalkFinal, "runId"> | undefined;
     const ownsSlot = () =>
       callId
         ? session.activeAgentToolCalls.get(callId) === registration
@@ -305,7 +305,11 @@ export function createRelayAgentRunRegistration(
                 if (read.value?.sessionId !== sessionId) {
                   throw new Error("Realtime relay transcript changed before agent dispatch");
                 }
-                return { sessionId, lifecycleRevision: read.value.lifecycleRevision };
+                return {
+                  sessionId,
+                  lifecycleRevision: read.value.lifecycleRevision,
+                  physicalSource,
+                };
               },
             );
           }

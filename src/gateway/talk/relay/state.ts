@@ -47,7 +47,7 @@ type TalkRealtimeRelayEventData =
       itemId?: string;
       responseId?: string;
     }
-  | { type: "audioDone"; itemId?: string; responseId?: string }
+  | { type: "audioDone"; itemId?: string; responseId?: string; outputOwnership?: "host" }
   | { type: "clear"; reason?: RealtimeVoiceAudioClearReason }
   | { type: "mark"; markName: string }
   | {
@@ -276,7 +276,7 @@ export type RelayAgentRunRegistration = {
 export type OwnedTalkPlayback = {
   turnId: string;
   markName: string;
-  runId: string;
+  final: OwnedTalkFinal;
   epoch: number;
   controller: AbortController;
   phase: "preparing" | "playing" | "awaiting" | "completed" | "cancelled" | "failed";
@@ -284,7 +284,12 @@ export type OwnedTalkPlayback = {
   commit?: Promise<void>;
 };
 
-export type OwnedTalkFinal = { runId: string; sessionId: string; lifecycleRevision?: string };
+export type OwnedTalkFinal = {
+  runId: string;
+  sessionId: string;
+  lifecycleRevision?: string;
+  physicalSource: ClientVoiceSessionSource;
+};
 
 export type RelaySession = {
   getToolAuthorityOverlay?: (
@@ -304,6 +309,7 @@ export type RelaySession = {
     inputTurns: Set<string>;
     generation: number;
     finals: Map<string, OwnedTalkFinal>;
+    retiredMarks: Set<string>;
     playback?: OwnedTalkPlayback;
   };
   sessionTarget: PreparedTalkSessionTarget;

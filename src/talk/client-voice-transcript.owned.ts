@@ -24,6 +24,8 @@ export type OwnedRelayPlayback = {
   consultRunId: string;
   terminalMessageId: string;
   playbackId: string;
+  sessionId: string;
+  lifecycleRevision?: string;
 };
 
 /** Validate the actual relay, consult, terminal and replacement under the transcript write lock. */
@@ -34,6 +36,9 @@ export function validateOwnedVoiceTranscriptCommit(
   appended: { messageId: string; message: unknown },
 ) {
   const { owned } = voice;
+  if (scope.sessionId !== owned.sessionId) {
+    throw new Error("owned voice replacement targets a different consult incarnation");
+  }
   const relay = readVoiceSessionRecordInTransaction(database, voice.voiceSessionId);
   if (
     !relay ||

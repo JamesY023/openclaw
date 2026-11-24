@@ -4,7 +4,7 @@ import {
   cancelOwnedTalkPlayback,
   deliverOwnedTalkResult,
 } from "./owned-output.js";
-import { relaySessions, type RelaySession } from "./state.js";
+import { relaySessions, type OwnedTalkFinal, type RelaySession } from "./state.js";
 
 const mocks = vi.hoisted(() => ({
   append: vi.fn(),
@@ -49,13 +49,18 @@ function fixture() {
     id: "voice-one",
     connId: "owner-socket",
     toolResultEpoch: 0,
-    ownedOutput: {},
+    ownedOutput: { retiredMarks: new Set() },
     context: { getRuntimeConfig: () => ({}), broadcastToConnIds, logGateway: { warn: vi.fn() } },
     sessionTarget: { agentId: "jessica", canonicalKey: key, sessionKey: key, assertCurrent() {} },
     harness: { talk: { emit: (event: unknown) => event, endTurn: vi.fn() } },
   } as unknown as RelaySession;
   relaySessions.set(session.id, session);
-  return { session, broadcastToConnIds };
+  const final = {
+    runId: "run-one",
+    sessionId: "session-one",
+    physicalSource: { assertCurrent() {}, options: { env: {} } },
+  } as OwnedTalkFinal;
+  return { session, broadcastToConnIds, final };
 }
 
 afterEach(() => {
@@ -65,8 +70,8 @@ afterEach(() => {
 
 describe("owned Talk output", () => {
   it("reads an exact durable final, plays to the owning connection, and appends once on acknowledgement", async () => {
-    const { session, broadcastToConnIds } = fixture();
-    deliverOwnedTalkResult(session, { runId: "run-one", sessionId: "session-one" }, "turn-one");
+    const { session, broadcastToConnIds, final } = fixture();
+    deliverOwnedTalkResult(session, final, "turn-one");
     await vi.waitFor(() => expect(session.ownedOutput?.playback?.phase).toBe("awaiting"));
     expect(mocks.append).not.toHaveBeenCalled();
     expect(mocks.speech).toHaveBeenCalledWith(
@@ -102,21 +107,19 @@ describe("owned Talk output", () => {
   it.each(["cancelled", "failed"] as const)(
     "keeps the durable final when playback is %s",
     async (outcome) => {
-      const { session } = fixture();
-      deliverOwnedTalkResult(session, { runId: "run-one", sessionId: "session-one" }, "turn-one");
+      const { session, final } = fixture();
+      deliverOwnedTalkResult(session, final, "turn-one");
       await vi.waitFor(() => expect(session.ownedOutput?.playback?.phase).toBe("awaiting"));
       const mark = session.ownedOutput!.playback!.markName;
       await acknowledgeOwnedTalkPlayback(session, mark, outcome);
-      await expect(acknowledgeOwnedTalkPlayback(session, mark, "completed")).rejects.toThrow(
-        /cancelled/,
-      );
+      await expect(acknowledgeOwnedTalkPlayback(session, mark, "completed")).resolves.toBe(true);
       expect(mocks.append).not.toHaveBeenCalled();
     },
   );
 
   it("cannot commit after the relay retires its exact turn", async () => {
-    const { session } = fixture();
-    deliverOwnedTalkResult(session, { runId: "run-one", sessionId: "session-one" }, "turn-one");
+    const { session, final } = fixture();
+    deliverOwnedTalkResult(session, final, "turn-one");
     await vi.waitFor(() => expect(session.ownedOutput?.playback?.phase).toBe("awaiting"));
     const mark = session.ownedOutput!.playback!.markName;
     cancelOwnedTalkPlayback(session, "another-turn");
@@ -129,16 +132,24 @@ describe("owned Talk output", () => {
   });
 
   it("does not read or speak a same-run final after the prepared session incarnation changes", async () => {
-    const { session, broadcastToConnIds } = fixture();
-    deliverOwnedTalkResult(
-      session,
-      { runId: "run-one", sessionId: "previous-session" },
-      "turn-one",
-    );
+    const { session, broadcastToConnIds, final } = fixture();
+    deliverOwnedTalkResult(session, { ...final, sessionId: "previous-session" }, "turn-one");
     await vi.waitFor(() => expect(session.ownedOutput?.playback?.phase).toBe("failed"));
     expect(mocks.history).not.toHaveBeenCalled();
     expect(mocks.speech).not.toHaveBeenCalled();
     expect(mocks.append).not.toHaveBeenCalled();
     expect(broadcastToConnIds.mock.calls.map((call) => call[1].type)).toEqual(["clear"]);
+  });
+
+  it("accepts a retired mark without disturbing the newer turn or appending", async () => {
+    const { session, final } = fixture();
+    deliverOwnedTalkResult(session, final, "first");
+    await vi.waitFor(() => expect(session.ownedOutput?.playback?.phase).toBe("awaiting"));
+    const mark = session.ownedOutput!.playback!.markName;
+    cancelOwnedTalkPlayback(session, "first");
+    deliverOwnedTalkResult(session, { ...final, runId: "run-two" }, "second");
+    await expect(acknowledgeOwnedTalkPlayback(session, mark, "completed")).resolves.toBe(true);
+    expect(session.ownedOutput!.playback!.turnId).toBe("second");
+    expect(mocks.append).not.toHaveBeenCalled();
   });
 });
