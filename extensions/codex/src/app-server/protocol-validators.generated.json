@@ -1986,7 +1986,11 @@
               },
               "required": ["id", "status", "type"],
               "title": "ImageGenerationThreadItem",
-              "type": "object"
+              "type": "object",
+              "anyOf": [
+                { "required": ["fileId"], "properties": { "fileId": { "type": "string" } } },
+                { "required": ["result"], "properties": { "result": { "type": "string" } } }
+              ]
             },
             {
               "properties": {

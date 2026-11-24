@@ -143,6 +143,7 @@ describe("Codex thread response validators", () => {
     const items = [
       { id: "audio", type: "userMessage", content: [{ type: "audio", fileId: "stored-audio" }] },
       { id: "generated", type: "imageGeneration", status: "completed", fileId: "stored-image" },
+      { id: "inline-image", type: "imageGeneration", status: "completed", result: "image-data" },
       { id: "partial", type: "agentMessage", phase: "partial_answer", text: "The result so far." },
     ];
     const nativeTurn = { id: "turn-1", status: "completed", items };
@@ -159,6 +160,26 @@ describe("Codex thread response validators", () => {
       assertCodexThreadResumeResponse(makeMinimalResponse({ turns: [malformed] })),
     ).toThrow("Invalid Codex app-server");
   });
+
+  it.each([{}, { fileId: 4 }])(
+    "refuses completed images without an artifact identity (%j)",
+    (identity) => {
+      const nativeTurn = {
+        id: "turn-1",
+        status: "completed",
+        items: [{ id: "generated", type: "imageGeneration", status: "completed", ...identity }],
+      };
+      expect(() =>
+        assertCodexThreadResumeResponse(makeMinimalResponse({ turns: [nativeTurn] })),
+      ).toThrow("Invalid Codex app-server");
+      expect(
+        prepareCodexServerNotification({
+          method: "turn/completed",
+          params: { threadId: "thread-1", turn: nativeTurn },
+        }).completedTurn,
+      ).toBeUndefined();
+    },
+  );
 
   it.each([
     { label: "start", assertResponse: assertCodexThreadStartResponse },

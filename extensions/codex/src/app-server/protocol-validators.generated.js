@@ -1353,7 +1353,11 @@ var isCodexDynamicToolCallParams = (() => {
               typeof value.transparentBackground == "boolean" ||
               value.transparentBackground === null) &&
             typeof value.type == "string" &&
-            value.type === "imageGeneration",
+            value.type === "imageGeneration" &&
+            (!(typeof value == "object" && value !== null && !Array.isArray(value)) ||
+              ("fileId" in value && typeof value.fileId == "string") ||
+              !(typeof value == "object" && value !== null && !Array.isArray(value)) ||
+              ("result" in value && typeof value.result == "string")),
           typeof value == "object" &&
             value !== null &&
             !Array.isArray(value) &&
@@ -3442,7 +3446,11 @@ var isCodexDynamicToolCallParams = (() => {
               typeof value.transparentBackground == "boolean" ||
               value.transparentBackground === null) &&
             typeof value.type == "string" &&
-            value.type === "imageGeneration",
+            value.type === "imageGeneration" &&
+            (!(typeof value == "object" && value !== null && !Array.isArray(value)) ||
+              ("fileId" in value && typeof value.fileId == "string") ||
+              !(typeof value == "object" && value !== null && !Array.isArray(value)) ||
+              ("result" in value && typeof value.result == "string")),
           typeof value == "object" &&
             value !== null &&
             !Array.isArray(value) &&
@@ -4816,7 +4824,11 @@ var isCodexDynamicToolCallParams = (() => {
               typeof value.transparentBackground == "boolean" ||
               value.transparentBackground === null) &&
             typeof value.type == "string" &&
-            value.type === "imageGeneration",
+            value.type === "imageGeneration" &&
+            (!(typeof value == "object" && value !== null && !Array.isArray(value)) ||
+              ("fileId" in value && typeof value.fileId == "string") ||
+              !(typeof value == "object" && value !== null && !Array.isArray(value)) ||
+              ("result" in value && typeof value.result == "string")),
           typeof value == "object" &&
             value !== null &&
             !Array.isArray(value) &&
@@ -6193,7 +6205,11 @@ var isCodexDynamicToolCallParams = (() => {
               typeof value.transparentBackground == "boolean" ||
               value.transparentBackground === null) &&
             typeof value.type == "string" &&
-            value.type === "imageGeneration",
+            value.type === "imageGeneration" &&
+            (!(typeof value == "object" && value !== null && !Array.isArray(value)) ||
+              ("fileId" in value && typeof value.fileId == "string") ||
+              !(typeof value == "object" && value !== null && !Array.isArray(value)) ||
+              ("result" in value && typeof value.result == "string")),
           typeof value == "object" &&
             value !== null &&
             !Array.isArray(value) &&

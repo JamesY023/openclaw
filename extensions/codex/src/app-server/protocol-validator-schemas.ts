@@ -69,8 +69,14 @@ export function createCodexValidationSchemas() {
                     },
                   }
                 : item.title === "ImageGenerationThreadItem"
-                  ? // 0.170 no longer includes the inline provider result for each item.
-                    { ...item, required: item.required.filter((key) => key !== "result") }
+                  ? {
+                      ...item,
+                      required: item.required.filter((key) => key !== "result"),
+                      anyOf: [
+                        { required: ["fileId"], properties: { fileId: { type: "string" } } },
+                        { required: ["result"], properties: { result: { type: "string" } } },
+                      ],
+                    }
                   : item,
             ),
           },
