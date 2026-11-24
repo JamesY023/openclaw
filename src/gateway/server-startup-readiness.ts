@@ -2,18 +2,27 @@ import type { GatewayStartupTrace } from "./server-startup-trace.js";
 import type { PreparedReadinessChecker } from "./server/readiness.types.js";
 
 type GatewayReadinessLog = {
-  log: { info: (message: string) => void };
+  log: { info: (message: string, metadata?: { consoleMessage: string }) => void };
   getReadiness: PreparedReadinessChecker;
   isClosing?: () => boolean;
 };
 
+function writeReadyLog(log: GatewayReadinessLog["log"]): void {
+  // Skynet2's idle restart verifies the deployed gateway's exact console marker.
+  log.info("gateway ready", { consoleMessage: "ready" });
+}
+
 export async function logGatewayReady(
   params: GatewayReadinessLog,
-  message = "gateway ready",
+  message?: string,
 ): Promise<void> {
   const prepared = await params.getReadiness.prepare();
   if (!params.isClosing?.() && prepared.publish().ready) {
-    params.log.info(message);
+    if (message === undefined) {
+      writeReadyLog(params.log);
+    } else {
+      params.log.info(message);
+    }
   }
 }
 
@@ -59,7 +68,7 @@ export function createGatewayReadyAnnouncer(
     ) {
       readyAnnounced = true;
       params.startupTrace.mark("ready");
-      params.log.info("gateway ready");
+      writeReadyLog(params.log);
     }
   };
 }
