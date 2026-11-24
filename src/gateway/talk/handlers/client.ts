@@ -73,7 +73,10 @@ import {
   closeTalkClientGatewayControlSession,
   sendTalkClientGatewayControlSpeech,
 } from "../client-gateway-control.js";
-import { resolveTalkAgentConsultAuthority } from "../client-tool-authority.js";
+import {
+  constrainTalkConsultAuthority,
+  resolveTalkAgentConsultAuthority,
+} from "../client-tool-authority.js";
 import { createTalkRunCancel } from "../realtime-run-control.js";
 import {
   ensureTalkRealtimeRelayVoiceSession,
@@ -378,10 +381,12 @@ export const talkClientHandlers: GatewayRequestHandlers = {
         } catch (err) {
           return { ok: false, error: errorShape(ErrorCodes.INVALID_REQUEST, formatForLog(err)) };
         }
-        const normalizedTalk = request.context.getRuntimeConfig().talk;
-        const authority = resolveTalkAgentConsultAuthority(
-          request.client?.connect?.scopes,
-          request.client,
+        const config = request.context.getRuntimeConfig();
+        const normalizedTalk = config.talk;
+        const authority = constrainTalkConsultAuthority(
+          config,
+          target.agentId,
+          resolveTalkAgentConsultAuthority(request.client?.connect?.scopes, request.client),
         );
         // Only an explicitly requested voice ID scopes replay. An implicit record
         // may be regenerated after close/reconnect; chat still owns that call's replay.

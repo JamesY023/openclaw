@@ -40,6 +40,7 @@ import type {
 import { createTalkClientAgentRuntime } from "./client-agent-runtime.js";
 import type { TalkClientRunAuthority } from "./client-run-authority.js";
 import {
+  constrainTalkConsultAuthority,
   prepareTalkClientToolContext,
   resolveTalkAgentConsultAuthority,
   type TalkAgentConsultAuthority,
@@ -59,6 +60,11 @@ export async function prepareTalkClientControlAuthority(params: {
   if (params.source === "reply" && !params.authority.replyCaller) {
     throw new Error("Talk chat caller authority is unavailable");
   }
+  const authority = constrainTalkConsultAuthority(
+    params.config,
+    params.sessionTarget.agentId,
+    params.authority,
+  );
   // The control callback reads current policy immediately before the execution effect.
   const sessionEntry = await params.agentRuntime.session.getSessionEntryAsync({
     agentId: params.sessionTarget.agentId,
@@ -70,15 +76,15 @@ export async function prepareTalkClientControlAuthority(params: {
     prepareTalkClientToolContext({
       config: params.config,
       agentId: params.sessionTarget.agentId,
-      authority: params.authority,
+      authority,
       sessionEntry,
     })?.toolAuthorityOverlay ??
     buildRealtimeVoiceAgentToolAuthorityOverlay({
       sessionEntry,
       deliveryContext: deliveryContextFromSession(sessionEntry),
       messageProvider: "webchat",
-      senderIsOwner: params.authority.senderIsOwner,
-      toolsAllow: params.authority.toolsAllow,
+      senderIsOwner: authority.senderIsOwner,
+      toolsAllow: authority.toolsAllow,
     });
   // Direct attempts do not implement reply tracing; permission/reviewer facts are shared.
   return params.source === "reply" ? overlay : { ...overlay, traceAuthorized: false };
@@ -154,6 +160,7 @@ export function createTalkClientAgentConsultRunner(params: {
     await ready?.();
     signal?.throwIfAborted();
     const config = getConfig();
+    const scopedAuthority = constrainTalkConsultAuthority(config, agentId, authority);
     const physicalSource = params.getVoiceSessionSource?.();
     if (params.getVoiceSessionSource && !physicalSource) {
       throw new Error("Realtime browser voice session is not ready for agent consult");
@@ -234,13 +241,13 @@ export function createTalkClientAgentConsultRunner(params: {
           questionSourceLabel: "user",
           thinkLevel: talkConfig?.consultThinkingLevel,
           fastMode: talkConfig?.consultFastMode,
-          senderIsOwner: authority.senderIsOwner,
-          toolsAllow: authority.toolsAllow,
+          senderIsOwner: scopedAuthority.senderIsOwner,
+          toolsAllow: scopedAuthority.toolsAllow,
           prepareToolContext: (sessionEntry) => {
             const toolContext = prepareTalkClientToolContext({
               config,
               agentId,
-              authority,
+              authority: scopedAuthority,
               sessionEntry,
             });
             if (!toolContext) {

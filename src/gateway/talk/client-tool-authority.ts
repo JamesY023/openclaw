@@ -44,6 +44,36 @@ export function resolveTalkAgentConsultAuthority(
   };
 }
 
+/** A Talk administrator is not Jessica's configured human owner by scope alone. */
+export function constrainTalkConsultAuthority(
+  config: OpenClawConfig,
+  agentId: string,
+  authority: TalkAgentConsultAuthority,
+): TalkAgentConsultAuthority {
+  if (agentId !== "jessica") {
+    return authority;
+  }
+  const ctx = authority.replyCaller;
+  const owner = config.plugins?.entries?.["skynet-jessica"]?.config?.ownerProfileId;
+  if (
+    ctx &&
+    typeof owner === "string" &&
+    owner.length > 0 &&
+    getCommandSenderAuthority(ctx)?.() === owner &&
+    resolveCommandAuthorization({ ctx, cfg: config, commandAuthorized: false }).senderIsOwner
+  ) {
+    return { ...authority, senderIsOwner: true };
+  }
+  const safeTools = resolveRealtimeVoiceAgentConsultToolsAllow("safe-read-only") ?? [];
+  return {
+    ...authority,
+    senderIsOwner: false,
+    toolsAllow: authority.toolsAllow
+      ? safeTools.filter((name) => authority.toolsAllow?.includes(name))
+      : safeTools,
+  };
+}
+
 /** Adapt the authenticated caller, not ASR text or a previous delivery route. */
 export function prepareTalkClientToolContext(params: {
   config: OpenClawConfig;
@@ -55,17 +85,21 @@ export function prepareTalkClientToolContext(params: {
   if (!ctx) {
     return undefined;
   }
-  const senderIsOwner = resolveCommandAuthorization({
-    ctx,
-    cfg: params.config,
-    commandAuthorized: false,
-  }).senderIsOwner;
+  const authority = constrainTalkConsultAuthority(params.config, params.agentId, params.authority);
+  const senderIsOwner =
+    params.agentId === "jessica"
+      ? authority.senderIsOwner
+      : resolveCommandAuthorization({
+          ctx,
+          cfg: params.config,
+          commandAuthorized: false,
+        }).senderIsOwner;
   const toolAuthorityOverlay = resolveInboundReplyToolAuthorityOverlay({
     ctx,
     sessionEntry: params.sessionEntry,
     senderIsOwner,
-    operatorAuthority: params.authority.operatorAuthority,
-    toolsAllow: params.authority.toolsAllow,
+    operatorAuthority: authority.operatorAuthority,
+    toolsAllow: authority.toolsAllow,
     disableTools: false,
   });
   const ownerProfileId = params.config.plugins?.entries?.["skynet-jessica"]?.config?.ownerProfileId;
