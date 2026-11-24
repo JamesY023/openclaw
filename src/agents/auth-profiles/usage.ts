@@ -3,6 +3,7 @@
  * Records failures under the store lock, applies WHAM usage probes for Codex
  * subscription OAuth profiles, and exposes display helpers for unavailable profiles.
  */
+import { isDeepStrictEqual } from "node:util";
 import { normalizeProviderId } from "@openclaw/model-catalog-core/provider-id";
 import {
   asDateTimestampMs,
@@ -383,6 +384,7 @@ async function runWhamHalfOpenReprobe(params: {
   if (!didClaim || !claimedStats) {
     return undefined;
   }
+  const expectedStats = structuredClone(claimedStats);
   const result = await probeWhamForCooldown(expectedProfile, params.profileId);
   if (!result.available && !result.blockedUntil) {
     return undefined;
@@ -394,7 +396,7 @@ async function runWhamHalfOpenReprobe(params: {
       const currentStats = freshStore.usageStats?.[params.profileId];
       if (
         !currentStats ||
-        currentStats.blockedReason !== "subscription_limit" ||
+        !isDeepStrictEqual(currentStats, expectedStats) ||
         !isSameWhamCredential(expectedProfile, currentProfile)
       ) {
         return false;

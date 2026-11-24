@@ -315,6 +315,23 @@ describe("markAuthProfileFailure — WHAM-aware Codex cooldowns", () => {
     );
   }
 
+  it("does not clear a newer Codex quota block with an older provider response", async () => {
+    const now = Date.now();
+    const store = codexStore({ ...blockedStats(now), blockedSource: "codex_rate_limits" });
+    mockLockedUpdatesForStore(store);
+    const newerBlock = now + 172_800_000;
+    fetchMock.mockImplementationOnce(async () => {
+      store.usageStats![codexId]!.blockedUntil = newerBlock;
+      return Response.json(whamResponse(false));
+    });
+
+    await reprobe(store, { now });
+
+    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(store.usageStats?.[codexId]?.blockedUntil).toBe(newerBlock);
+    expect(store.usageStats?.[codexId]?.blockedSource).toBe("codex_rate_limits");
+  });
+
   async function markCodexFailureAt({
     store = makeStore({}),
     reason = "rate_limit",
