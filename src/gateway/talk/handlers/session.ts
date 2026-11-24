@@ -17,6 +17,7 @@ import { REALTIME_VOICE_AGENT_CONTROL_TOOL } from "../../../talk/agent-run-contr
 import { ensureClientVoiceAgentSessionEntry } from "../../../talk/client-voice-session-write.js";
 import {
   projectInternalRealtimeVoicePublicConfig,
+  resolveInternalRealtimeVoiceBrowserSessionTransport,
   resolveInternalRealtimeVoiceGatewayRelayLaunchError,
 } from "../../../talk/provider-internal.js";
 import { resolveConfiguredRealtimeVoiceProviderAsync } from "../../../talk/provider-resolver.js";
@@ -264,6 +265,19 @@ export const talkSessionHandlers = {
           // GPT-Live delegates natively; forced transcript consults are a GA-model mode.
           return respondInvalidRequest(respond, launchError);
         }
+        const hostOwnedOutput =
+          params.hostOwnedOutput === true &&
+          (await resolveInternalRealtimeVoiceBrowserSessionTransport({
+            provider: resolution.provider,
+            providerConfig,
+            cfg: runtimeConfig,
+            agentId,
+            model: launchOptions.model,
+            hostOwnedOutput: true,
+          })) === "gateway-relay";
+        if (hostOwnedOutput && params.voiceChangeId) {
+          return respondInvalidRequest(respond, "Host speech uses its configured voice");
+        }
         const capabilities = resolution.capabilities;
         const controlSource =
           capabilities?.handlesAgentConsult === true ? "delegation" : "transcript";
@@ -337,7 +351,7 @@ export const talkSessionHandlers = {
               provider: resolution.provider,
               providerConfig,
               controlSource,
-              hostOwnedOutput: params.hostOwnedOutput,
+              hostOwnedOutput,
               capabilities,
               clientCapabilities: params.capabilities,
               voiceChangeId: params.voiceChangeId,

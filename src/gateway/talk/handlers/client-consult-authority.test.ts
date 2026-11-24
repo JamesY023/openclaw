@@ -65,6 +65,7 @@ import {
 import { createTalkRealtimeRelaySession } from "../relay/session-create.js";
 import { relaySessions } from "../relay/state.js";
 import { prepareTalkSessionTarget } from "../session-target.js";
+import { requestTalkVoiceChange, resolveTalkVoiceSession } from "../voice-selection.js";
 import {
   forgetLegacyVoiceBinding,
   readLegacyVoiceBinding,
@@ -307,6 +308,8 @@ describe("voice consult registration authority", () => {
       instructions: "brief",
       controlSource: "delegation",
       hostOwnedOutput: true,
+      clientCapabilities: ["voice-selection"],
+      voiceSelectionVoices: ["cove", "ember"],
     });
     const relay = relaySessions.get(relaySessionId)!;
     const registration = registerConsult(sessionTarget, connId);
@@ -338,6 +341,21 @@ describe("voice consult registration authority", () => {
           expect.objectContaining({ type: "ready", outputOwnership: "host" }),
         ),
       );
+      const session = resolveTalkVoiceSession({
+        kind: "client",
+        connId,
+        voiceSessionId: relaySessionId,
+      });
+      expect(session.selection).toMatchObject({ voice: undefined, voices: [], canChange: false });
+      expect(() =>
+        requestTalkVoiceChange({
+          session,
+          requesterConnId: connId,
+          voice: "ember",
+          assertCurrent() {},
+          send() {},
+        }),
+      ).toThrow(/cannot change voices during a call/u);
       const utterance = {
         type: "turn.done",
         turn: { id: "provider-owned-turn", role: "user", transcript: "Check the fixture" },

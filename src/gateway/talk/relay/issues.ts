@@ -12,14 +12,18 @@ export function resolveTalkRealtimeRelayPresentation(
     | "voice"
     | "clientCapabilities"
     | "voiceSelectionVoices"
+    | "hostOwnedOutput"
   >,
 ) {
   const providerModel = normalizeOptionalString(params.providerConfig.model);
   const model =
     normalizeOptionalString(params.model) ?? providerModel ?? params.provider.defaultModel;
-  const voice =
-    normalizeOptionalString(params.voice) ?? normalizeOptionalString(params.providerConfig.voice);
-  const voices = [...(params.voiceSelectionVoices ?? [])];
+  // A negotiated host speech route uses the configured TTS provider, independent of the microphone provider.
+  const voice = params.hostOwnedOutput
+    ? undefined
+    : (normalizeOptionalString(params.voice) ??
+      normalizeOptionalString(params.providerConfig.voice));
+  const voices = params.hostOwnedOutput ? [] : [...(params.voiceSelectionVoices ?? [])];
   const publicModel = projectInternalRealtimeVoicePublicConfig({
     provider: params.provider,
     providerConfig: params.providerConfig,
