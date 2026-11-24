@@ -85,6 +85,61 @@ function connectSideband(
 }
 
 describe("GPT-Live gateway relay bridge", () => {
+  it.each([
+    { requested: true, auth: "oauth", host: true },
+    { requested: false, auth: "oauth", host: false },
+    { requested: true, auth: "api-key", host: false },
+  ] as const)(
+    "negotiates GPT-Live playback (requested=$requested, auth=$auth)",
+    async ({ requested, auth, host }) => {
+      const onOutputOwnership = vi.fn();
+      const runAgentConsult = vi.fn(async () => ({ text: "Synthetic native consult" }));
+      const peer = createPeer();
+      const startPeer = vi.fn(async (_callbacks: OpenAIQuicksilverAudioPeerCallbacks) => peer);
+      const { bridge, createSocket, onTranscript, onAudio, onReady } = createBridge({
+        model: "gpt-live-1-codex",
+        hostOwnedOutput: requested,
+        resolveAuth: async () =>
+          auth === "oauth"
+            ? { type: "oauth", token: "fixture-oauth", accountId: "fixture-account" }
+            : { type: "api-key", token: "fixture-platform-key" },
+        onOutputOwnership,
+        runAgentConsult,
+        createPeer: startPeer,
+      });
+      onTestFinished(() => bridge.close());
+      await bridge.connect();
+      const socket = createSocket.mock.results[0]?.value;
+      expect(socket).toBeInstanceOf(FakeSocket);
+      emitSideband(socket, { type: "session.started", session: {} });
+      expect(onOutputOwnership).toHaveBeenCalledExactlyOnceWith(host ? "host" : "provider");
+      expect(onOutputOwnership).toHaveBeenCalledBefore(onReady);
+      const user = {
+        id: "sealed-user-turn",
+        role: "user",
+        transcript: "Check the synthetic answer",
+      };
+      emitSideband(socket, { type: "turn.done", turn: user });
+      emitSideband(socket, {
+        type: "turn.done",
+        turn: { id: "assistant-turn", role: "assistant", transcript: "Provider duplicate" },
+      });
+      startPeer.mock.calls[0]?.[0].onAudio(Buffer.from([0x1, 0x2]));
+      delegate(socket, "provider-delegation", user.transcript);
+      if (host) {
+        expect(onTranscript).toHaveBeenCalledExactlyOnceWith("user", user.transcript, true, {
+          providerTurnId: user.id,
+        });
+        expect(onAudio).not.toHaveBeenCalled();
+        expect(runAgentConsult).not.toHaveBeenCalled();
+      } else {
+        expect(onTranscript).toHaveBeenCalledTimes(2);
+        expect(onAudio).toHaveBeenCalledOnce();
+        await vi.waitFor(() => expect(runAgentConsult).toHaveBeenCalledOnce());
+      }
+    },
+  );
+
   it.each(["accepted", "rejected"])(
     "retains early readiness until the WebRTC answer is %s",
     async (outcome) => {

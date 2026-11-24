@@ -440,7 +440,7 @@ export function createSessionActorWorker(
           command.input.turn.options.sessionTurnMutation?.routingPredicate,
         );
         if (command.input.turn.options.voiceTranscript) {
-          await prepareVoiceTranscriptCommit();
+          await prepareVoiceTranscriptCommit(command.input.turn.options.voiceTranscript);
         }
       }
     },

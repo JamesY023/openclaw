@@ -303,6 +303,7 @@ describe("RealtimeTalkSession", () => {
       {
         sessionKey: "main",
         capabilities: ["voice-transcript", "voice-selection", "camera-frame"],
+        hostOwnedOutput: true,
       },
       requestTimeoutOptions,
     );
@@ -315,6 +316,7 @@ describe("RealtimeTalkSession", () => {
         mode: "realtime",
         brain: "agent-consult",
         capabilities: ["voice-selection"],
+        hostOwnedOutput: true,
       },
       requestTimeoutOptions,
     );
@@ -347,6 +349,7 @@ describe("RealtimeTalkSession", () => {
         voiceChangeId: "voice-change-1",
         transport: "webrtc",
         capabilities: ["voice-transcript", "voice-selection"],
+        hostOwnedOutput: true,
       },
       requestTimeoutOptions,
     );
@@ -374,6 +377,7 @@ describe("RealtimeTalkSession", () => {
       {
         sessionKey: "main",
         capabilities: ["voice-transcript", "voice-selection", "camera-frame"],
+        hostOwnedOutput: true,
       },
       requestTimeoutOptions,
     );
@@ -440,6 +444,7 @@ describe("RealtimeTalkSession", () => {
       {
         sessionKey: "main",
         capabilities: ["voice-transcript", "voice-selection"],
+        hostOwnedOutput: true,
       },
       requestTimeoutOptions,
     );
@@ -478,7 +483,11 @@ describe("RealtimeTalkSession", () => {
     expect(request.mock.calls).toEqual([
       [
         "talk.client.create",
-        { sessionKey: "main", capabilities: ["voice-transcript", "voice-selection"] },
+        {
+          sessionKey: "main",
+          capabilities: ["voice-transcript", "voice-selection"],
+          hostOwnedOutput: true,
+        },
         requestTimeoutOptions,
       ],
       ["talk.config", {}, requestTimeoutOptions],
@@ -515,6 +524,7 @@ describe("RealtimeTalkSession", () => {
         transport: "gateway-relay",
         brain: "agent-consult",
         capabilities: ["voice-selection"],
+        hostOwnedOutput: true,
       },
       requestTimeoutOptions,
     );

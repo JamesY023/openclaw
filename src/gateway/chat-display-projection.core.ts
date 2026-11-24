@@ -1,6 +1,7 @@
 import { GATEWAY_ASSISTANT_ERROR_FALLBACK_TEXT } from "@openclaw/gateway-protocol/gateway-error-details";
 import { asOptionalRecord } from "@openclaw/normalization-core/record-coerce";
 import { STREAM_ERROR_FALLBACK_TEXT } from "../../packages/ai/src/replay-turn-classification.js";
+import { isIntermediateAssistantTranscriptMessage } from "../agents/embedded-agent-runner/message-visibility.js";
 import {
   renderAssistantRequestFailureCopy,
   renderRecordedAssistantFailureCopy,
@@ -17,8 +18,10 @@ import {
   nestedToolActivityContent,
 } from "../sessions/nested-tool-activity.js";
 import {
+  readOwnedVoiceTranscriptReplacement,
   readSessionTranscriptFailureRunId,
   readSessionTranscriptRunId,
+  resolveTerminalAssistantTranscriptRunId,
 } from "../sessions/transcript-events.js";
 import {
   CONTEXT_OVERFLOW_ERROR_MESSAGE,
@@ -583,13 +586,41 @@ export function prepareChatHistoryRecoveryMessages(
     : stripEnvelopeFromMessages(projectedMessages);
 }
 
+function retainUnreplacedTalkFinals(messages: unknown[]): unknown[] {
+  const replacements = new Map<string, { runId: string; index: number }>();
+  for (const [index, message] of messages.entries()) {
+    const replacement = readOwnedVoiceTranscriptReplacement(message);
+    if (replacement) {
+      replacements.set(replacement.messageId, { runId: replacement.runId, index });
+    }
+  }
+  if (!replacements.size) {
+    return messages;
+  }
+  return messages.filter((message, index) => {
+    const row = asOptionalRecord(message);
+    const id = asOptionalRecord(row?.["__openclaw"])?.id;
+    const replacement = typeof id === "string" ? replacements.get(id) : undefined;
+    return (
+      !replacement ||
+      replacement.index <= index ||
+      row?.stopReason !== "stop" ||
+      isIntermediateAssistantTranscriptMessage(message) ||
+      resolveTerminalAssistantTranscriptRunId(message, readSessionTranscriptRunId(message)) !==
+        replacement.runId
+    );
+  });
+}
+
 export function projectChatDisplayMessagesWithState(
   messages: unknown[],
   options?: ChatDisplayProjectionOptions,
 ): ChatDisplayProjectionResult {
   options?.subagentCoordination?.assertCurrent?.();
   const recovery = createChatHistoryRecoveryProjection(options);
-  const catalogDisplay = messages.flatMap(projectPreservedCatalogMessageForDisplay);
+  const catalogDisplay = retainUnreplacedTalkFinals(messages).flatMap(
+    projectPreservedCatalogMessageForDisplay,
+  );
   recovery.append(catalogDisplay);
   const recoveredErrors = recovery.result();
   const projectedErrors = projectEmptyAssistantErrorMessages(

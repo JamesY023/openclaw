@@ -37,12 +37,13 @@ export const RELAY_TRANSCRIPT_ECHO_LOOKBACK_MS = 12_000;
 export const noFallbackRelayOutputFlush = () => {};
 
 type TalkRealtimeRelayEventData =
-  | { type: "ready" }
+  | { type: "ready"; outputOwnership?: "host" }
   | { type: "responseStarted"; turnId: string }
   | { type: "inputAudio"; byteLength: number }
   | {
       type: "audio";
       audioBase64: string;
+      outputOwnership?: "host";
       itemId?: string;
       responseId?: string;
     }
@@ -272,6 +273,19 @@ export type RelayAgentRunRegistration = {
   prepareTranscript: PrepareAssistantTranscriptMessage;
 };
 
+export type OwnedTalkPlayback = {
+  turnId: string;
+  markName: string;
+  runId: string;
+  epoch: number;
+  controller: AbortController;
+  phase: "preparing" | "playing" | "awaiting" | "completed" | "cancelled" | "failed";
+  terminal?: { messageId: string; text: string };
+  commit?: Promise<void>;
+};
+
+export type OwnedTalkFinal = { runId: string; sessionId: string; lifecycleRevision?: string };
+
 export type RelaySession = {
   getToolAuthorityOverlay?: (
     authority?: TalkAgentConsultAuthority,
@@ -286,6 +300,12 @@ export type RelaySession = {
   harness: RealtimeVoiceSessionHarness;
   capabilities?: InternalRealtimeVoiceProviderCapabilities;
   outputOwnership: TalkRealtimeRelayOutputOwnership;
+  ownedOutput?: {
+    inputTurns: Set<string>;
+    generation: number;
+    finals: Map<string, OwnedTalkFinal>;
+    playback?: OwnedTalkPlayback;
+  };
   sessionTarget: PreparedTalkSessionTarget;
   expiresAtMs: number;
   cleanupTimer: ReturnType<typeof setTimeout>;
@@ -333,6 +353,7 @@ export type CreateTalkRealtimeRelaySessionParams = {
   provider: RealtimeVoiceProviderPlugin;
   providerConfig: RealtimeVoiceProviderConfig;
   controlSource: "delegation" | "transcript";
+  hostOwnedOutput?: boolean;
   capabilities?: InternalRealtimeVoiceProviderCapabilities;
   clientCapabilities?: readonly "voice-selection"[];
   voiceChangeId?: string;
@@ -402,7 +423,7 @@ export function broadcastToOwner(
   // Classify the materialized Talk event so final results cannot be mistaken
   // for transient tool progress by individual provider callback paths.
   const dropIfSlow =
-    event.type === "audio" ||
+    (event.type === "audio" && event.outputOwnership !== "host") ||
     event.type === "inputAudio" ||
     (event.type === "transcript" && !event.final) ||
     ((event.type === "toolProgress" || event.type === "toolResult") &&

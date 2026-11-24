@@ -103,6 +103,7 @@ export class OpenAIQuicksilverGatewayBridge implements RealtimeVoiceBridge {
   private closingPromise: Promise<void> | undefined;
   private closeReason: "completed" | "error" = "completed";
   private providerSessionClosed = false;
+  private hostOwnedOutput = false;
   private peer: OpenAIQuicksilverAudioPeerContract | undefined;
   private audioOutput: RealtimeVoiceAudioOutputPort | undefined;
   private pendingAudio = new OpenAIQuicksilverPendingAudio();
@@ -214,6 +215,12 @@ export class OpenAIQuicksilverGatewayBridge implements RealtimeVoiceBridge {
     let auth: OpenAIQuicksilverAuth;
     try {
       auth = await waitForOpenAIQuicksilverConnectStep(this.config.resolveAuth(), connectSignal);
+      connectSignal.throwIfAborted();
+      this.hostOwnedOutput =
+        this.config.hostOwnedOutput === true &&
+        auth.type === "oauth" &&
+        isOpenAIGptLiveSubscriptionModel(this.config.model);
+      this.config.onOutputOwnership?.(this.hostOwnedOutput ? "host" : "provider");
     } catch (error) {
       if (!this.closingPromise) {
         this.releaseResources("abort");
@@ -296,15 +303,21 @@ export class OpenAIQuicksilverGatewayBridge implements RealtimeVoiceBridge {
         return await OpenAIQuicksilverAudioPeer.create({
           callbacks,
           signal,
-          output: this.audioOutput,
+          output: this.hostOwnedOutput ? undefined : this.audioOutput,
         });
       });
     const peerPromise = createPeer(
       {
-        onAudio: (audio) => this.audio.sendOutput(audio),
+        onAudio: (audio) => {
+          if (!this.hostOwnedOutput) this.audio.sendOutput(audio);
+        },
         onError: (error) => this.fail(error),
         onMediaError: () => this.config.logger.debug?.("GPT-Live WebRTC media packet dropped"),
-        onRtpPacket: () => this.config.onEvent?.({ direction: "server", type: "output_audio.rtp" }),
+        onRtpPacket: () => {
+          if (!this.hostOwnedOutput) {
+            this.config.onEvent?.({ direction: "server", type: "output_audio.rtp" });
+          }
+        },
       },
       connectSignal,
     );
@@ -490,7 +503,8 @@ export class OpenAIQuicksilverGatewayBridge implements RealtimeVoiceBridge {
           }
           params?.onSessionStarted?.();
         },
-        onTranscript: (role, text, done) => this.config.onTranscript?.(role, text, done),
+        hostOwnedOutput: this.hostOwnedOutput,
+        onTranscript: (...args) => this.config.onTranscript?.(...args),
         handleDelegationInput: this.config.handleDelegationInput,
         onWireEventType: (eventType) => {
           this.config.onEvent?.({ direction: "server", type: eventType });

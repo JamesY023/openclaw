@@ -376,8 +376,11 @@ export const talkClientHandlers: GatewayRequestHandlers = {
         { ok: true; runId: string; idempotencyKey: string } | { ok: false; error: ErrorShape }
       > => {
         let message: string;
+        let question: string;
         try {
-          message = buildRealtimeVoiceAgentConsultChatMessage(params.args ?? {});
+          const consultInput = parseRealtimeVoiceAgentConsultArgs(params.args ?? {});
+          question = consultInput.question;
+          message = buildRealtimeVoiceAgentConsultChatMessage(consultInput);
         } catch (err) {
           return { ok: false, error: errorShape(ErrorCodes.INVALID_REQUEST, formatForLog(err)) };
         }
@@ -391,11 +394,13 @@ export const talkClientHandlers: GatewayRequestHandlers = {
         const commandSender = getCommandSenderAuthority(authority.replyCaller);
         const ownerProfileId = config.plugins?.entries?.["skynet-jessica"]?.config?.ownerProfileId;
         const talkToolSender =
-          target.agentId === "jessica" && authority.senderIsOwner && typeof ownerProfileId === "string"
+          target.agentId === "jessica" &&
+          authority.senderIsOwner &&
+          typeof ownerProfileId === "string"
             ? () => {
                 const currentConfig = request.context.getRuntimeConfig();
-                const currentOwner = currentConfig.plugins?.entries?.["skynet-jessica"]?.config
-                  ?.ownerProfileId;
+                const currentOwner =
+                  currentConfig.plugins?.entries?.["skynet-jessica"]?.config?.ownerProfileId;
                 return currentOwner === ownerProfileId && commandSender?.() === ownerProfileId
                   ? ownerProfileId
                   : undefined;
@@ -489,7 +494,8 @@ export const talkClientHandlers: GatewayRequestHandlers = {
           // Speech owns normal history; detached transports leave the accepted answer to Chat.
           const chatSendResult = handleTrustedInternalChatSend(chatSendOptions, undefined, {
             toolsAllow: authority.toolsAllow,
-            transcript: { display: false, excludeFromContext: true },
+            // Context and spoken style guide the run, but cannot become the originating instruction.
+            transcript: { display: false, excludeFromContext: true, text: question },
             prepareAssistantTranscriptMessage: (assistantMessage, sourceText) =>
               (relayRegistration?.prepareTranscript ?? prepareTalkAgentConsultTranscript)(
                 assistantMessage,

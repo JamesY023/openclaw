@@ -17,6 +17,7 @@ import {
   RealtimeTalkPcmOutputQueue,
 } from "./audio.ts";
 import type { DelayedToolResult, GatewayRelayEvent } from "./gateway-relay-types.ts";
+import { RealtimeTalkOwnedOutput } from "./owned-output.ts";
 import {
   REALTIME_VOICE_AGENT_CONSULT_TOOL_NAME,
   REALTIME_VOICE_AGENT_CONTROL_TOOL_NAME,
@@ -54,6 +55,17 @@ export class GatewayRelayRealtimeTalkTransport implements RealtimeTalkTransport 
     this.ctx.callbacks.onInputNotice?.(detail),
   );
   private readonly outputQueue = new RealtimeTalkPcmOutputQueue();
+  private hostOwnsOutput = false;
+  private readonly ownedOutput = new RealtimeTalkOwnedOutput({
+    client: this.ctx.client,
+    sessionId: this.session.relaySessionId,
+    drain: () => this.outputQueue.drain(),
+    stop: () => this.stopOutput(),
+    reportError: (error) => this.fail(error),
+    stopSession: () => {
+      void this.stop({ disposition: "detach" });
+    },
+  });
   private readonly toolAbortControllers = new Map<string, AbortController>();
   private readonly completedToolCalls = new Set<string>();
   private readonly submittingToolCalls = new Set<string>();
@@ -200,6 +212,7 @@ export class GatewayRelayRealtimeTalkTransport implements RealtimeTalkTransport 
     // Mark callbacks recurse until playback drains, so shutdown must cancel every owned timer.
     this.markAckTimers.forEach((timer) => window.clearTimeout(timer));
     this.markAckTimers.clear();
+    this.ownedOutput.close();
     this.discardDelayedToolResults();
     this.abortConsults();
     this.playbackOverflowed = false;
@@ -349,6 +362,7 @@ export class GatewayRelayRealtimeTalkTransport implements RealtimeTalkTransport 
       }
       switch (event.type) {
         case "ready":
+          this.hostOwnsOutput = event.outputOwnership === "host";
           this.ctx.callbacks.onStatus?.("listening");
           return;
         case "audio":
@@ -363,7 +377,19 @@ export class GatewayRelayRealtimeTalkTransport implements RealtimeTalkTransport 
             }
             this.activeOutputTurnId = turnId;
             this.cancelRequestedForPlayback = false;
-            this.playPcm16(event.audioBase64);
+            if (this.hostOwnsOutput) {
+              if (this.ownedOutput.begin(turnId)) {
+                const frame = event.audioBase64;
+                this.ownedOutput.play(turnId, () => this.outputQueue.play(frame));
+              }
+            } else {
+              this.playPcm16(event.audioBase64);
+            }
+          }
+          return;
+        case "audioDone":
+          if (this.hostOwnsOutput) {
+            this.ownedOutput.done(event.talkEvent?.turnId);
           }
           return;
         case "clear":
@@ -371,6 +397,7 @@ export class GatewayRelayRealtimeTalkTransport implements RealtimeTalkTransport 
             return;
           }
           this.playbackOverflowed = false;
+          this.ownedOutput.clear(event.talkEvent?.turnId);
           this.stopOutput(this.pendingOutputCancellations === 0);
           this.activeOutputTurnId = null;
           if (event.talkEvent?.type === "turn.cancelled") {
@@ -379,7 +406,11 @@ export class GatewayRelayRealtimeTalkTransport implements RealtimeTalkTransport 
           return;
         case "mark":
           if (event.markName) {
-            this.scheduleMarkAck(event.markName);
+            if (this.hostOwnsOutput) {
+              this.ownedOutput.mark(event);
+            } else {
+              this.scheduleMarkAck(event.markName);
+            }
           }
           return;
         case "transcript":
@@ -668,6 +699,7 @@ export class GatewayRelayRealtimeTalkTransport implements RealtimeTalkTransport 
     // Releasing earlier can let the provider answer from a turn the user interrupted.
     this.pendingOutputCancellations += 1;
     this.pauseDelayedToolResults();
+    this.ownedOutput.finish(turnId, reason === "playback-overflow" ? "failed" : "cancelled");
     this.stopOutput(false);
     void this.ctx.client
       .request("talk.session.cancelOutput", {

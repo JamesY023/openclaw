@@ -69,6 +69,9 @@ export type InternalRealtimeVoiceProviderApi = {
       clientControl?: RealtimeVoiceBrowserSessionCreateRequest["clientControl"];
     },
   ) => Promise<InternalRealtimeVoiceProviderCapabilities>;
+  resolveBrowserSessionTransport?: (
+    ctx: RealtimeVoiceProviderConfiguredContext & { model?: string; hostOwnedOutput: boolean },
+  ) => Promise<"gateway-relay" | undefined>;
   /** @deprecated Use isGatewayRelayConfiguredAsync. Compatibility ends 2026-12-31. Removal in the first January 2027 stable release. */
   isGatewayRelayConfigured?: (ctx: RealtimeVoiceProviderConfiguredContext) => boolean | undefined;
   isGatewayRelayConfiguredAsync?: (
@@ -158,6 +161,18 @@ export function resolveInternalRealtimeVoiceGatewayRelayLaunchError(params: {
     model: params.model,
     autoRespondToAudio: params.autoRespondToAudio,
   });
+}
+
+export function resolveInternalRealtimeVoiceBrowserSessionTransport(
+  params: RealtimeVoiceProviderConfiguredContext & {
+    provider: RealtimeVoiceProviderPlugin;
+    model?: string;
+    hostOwnedOutput: boolean;
+  },
+): Promise<"gateway-relay" | undefined> | undefined {
+  return readInternalRealtimeVoiceProviderApi(params.provider)?.resolveBrowserSessionTransport?.(
+    params,
+  );
 }
 
 export async function cancelInternalRealtimeVoiceBrowserSession(params: {

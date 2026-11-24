@@ -78,7 +78,7 @@ export function createGatewayChatUserTurnController(params: {
   client: GatewayClient | null;
   request: NormalizedChatSendRequest;
   session: PreparedChatSendSession;
-  transcript?: Pick<UserTurnInput, "display" | "excludeFromContext">;
+  transcript?: Pick<UserTurnInput, "display" | "excludeFromContext" | "text">;
   startedAt: number;
   warn: (message: string) => void;
   mentionInbox?: MentionInbox;
@@ -134,7 +134,7 @@ export function createGatewayChatUserTurnController(params: {
   const baseInput: UserTurnInput = {
     ...params.transcript,
     ...(request.goalOperation?.action === "resume" ? { display: false } : {}),
-    text: request.rawMessage,
+    text: params.transcript?.text ?? request.rawMessage,
     requesterOrigin,
     ...(request.workContext ? { workContext: request.workContext } : {}),
     ...(request.mentions ? { mentions: request.mentions } : {}),

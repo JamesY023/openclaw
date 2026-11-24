@@ -589,7 +589,7 @@ function openAgentDatabaseBackend(
             : undefined,
           voice
             ? import("../config/sessions/session-turn.worker.js").then((turn) =>
-                turn.prepareVoiceTranscriptCommit(),
+                turn.prepareVoiceTranscriptCommit(voice),
               )
             : undefined,
         ]).then(() => {});

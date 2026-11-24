@@ -24,6 +24,7 @@ import {
   readChatHistoryRecoveryContext,
   readChatHistoryMessageSeq,
   readIncrementalChatHistoryTail,
+  readLaterOwnedVoiceFinalIds,
 } from "./session-history-tail.js";
 import type {
   SessionTranscriptPageReader,
@@ -145,13 +146,27 @@ export async function readChatHistoryPageKernel(
         }
       }
     }
-    const localMessages = dropChatHistoryOverreadContextMessage(
+    let localMessages = dropChatHistoryOverreadContextMessage(
       dropPreSessionStartAnnouncePairs(
         pageMessages,
         typeof entry?.sessionStartedAt === "number" ? entry.sessionStartedAt : undefined,
       ),
       overreadContextMessage,
     );
+    if (direction === "older" || readPage.offset > 0) {
+      const replaced = await readLaterOwnedVoiceFinalIds({
+        messages: localMessages,
+        readScope,
+        readers: options.readers,
+        displaySource: readPage.displaySource,
+        snapshotSeq: readPage.totalMessages,
+      });
+      if (replaced.size) {
+        localMessages = localMessages.filter(
+          (message) => !replaced.has(readChatHistoryMessageId(message) ?? ""),
+        );
+      }
+    }
     const project = (messages: unknown[]) =>
       projectChatDisplayMessagesWithState(messages, {
         includePluginSteering: params.includePluginSteering,

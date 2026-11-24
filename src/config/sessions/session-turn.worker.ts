@@ -47,8 +47,15 @@ import type { SessionTurnCommitted, SessionTurnPlan } from "./session-turn.types
 import { readMessageIdempotencyKey } from "./transcript-message-identity.js";
 
 let voiceKernel: typeof import("../../talk/client-voice-session-write.kernel.js") | undefined;
-export async function prepareVoiceTranscriptCommit() {
-  voiceKernel ??= await import("../../talk/client-voice-session-write.kernel.js");
+let ownedVoiceKernel: typeof import("../../talk/client-voice-transcript.owned.js") | undefined;
+export async function prepareVoiceTranscriptCommit(
+  voice: NonNullable<SessionTurnPlan["options"]["voiceTranscript"]>,
+) {
+  if ("owned" in voice) {
+    ownedVoiceKernel ??= await import("../../talk/client-voice-transcript.owned.js");
+  } else {
+    voiceKernel ??= await import("../../talk/client-voice-session-write.kernel.js");
+  }
 }
 
 function inCustody<T>(
@@ -399,12 +406,28 @@ export function applySessionTurn<T>(
                 }
               },
             );
-            if (input.options.voiceTranscript && committed.result.appendedMessages.length === 1) {
+            const voice = input.options.voiceTranscript;
+            if (voice && "owned" in voice) {
+              const [appended] = committed.result.appendedMessages;
+              if (
+                !ownedVoiceKernel ||
+                !appended ||
+                committed.result.appendedMessages.length !== 1
+              ) {
+                throw new Error("Owned voice replacement requires one prepared transcript event");
+              }
+              committed.result.voiceSession = ownedVoiceKernel.validateOwnedVoiceTranscriptCommit(
+                database,
+                scope,
+                voice,
+                appended,
+              );
+            } else if (voice && committed.result.appendedMessages.length === 1) {
               if (!voiceKernel) {
                 throw new Error("Voice transcript commit was not prepared");
               }
               committed.result.voiceSession = voiceKernel.mutateVoiceSessionInDatabase(database, {
-                ...input.options.voiceTranscript,
+                ...voice,
                 kind: "confirm",
                 now: Date.now(),
               });

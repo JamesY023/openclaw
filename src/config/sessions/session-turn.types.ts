@@ -2,6 +2,7 @@ import type {
   ClientVoiceRunBinding,
   ClientVoiceSessionRecord,
 } from "../../talk/client-voice-session-store.js";
+import type { OwnedRelayPlayback } from "../../talk/client-voice-transcript.owned.js";
 import type { OpenClawConfig } from "../types.openclaw.js";
 import type { CliHistoryWriterFacts } from "./cli-history-boundary.js";
 import type {
@@ -46,8 +47,9 @@ export type SqliteExpectedSessionTranscriptTurnResult = {
 
 export type SqliteSessionTurnOptions = {
   resolveRuntimeTarget?: true;
-  /** Same-store voice bookkeeping commits atomically with its reserved transcript event. */
-  voiceTranscript?: ClientVoiceRunBinding & { failureKey: string; role: "user" | "assistant" };
+  /** The voice owner and its reserved or playback-owned transcript share a commit. */
+  voiceTranscript?: ClientVoiceRunBinding &
+    ({ failureKey: string; role: "user" | "assistant" } | { owned: OwnedRelayPlayback });
   ownerSource?: PreparedSessionSourceAuthority;
   workerPrepared?: true;
   preparedGoalId?: string;

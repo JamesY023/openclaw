@@ -71,7 +71,13 @@ type OpenAIQuicksilverDelegationControllerOptions = {
   onSessionClosed?: (
     reason: Extract<OpenAIQuicksilverInboundEvent, { kind: "session-closed" }>["reason"],
   ) => void;
-  onTranscript?: (role: "user" | "assistant", text: string, done: boolean) => void;
+  onTranscript?: (
+    role: "user" | "assistant",
+    text: string,
+    done: boolean,
+    metadata?: { providerTurnId: string },
+  ) => void;
+  hostOwnedOutput?: boolean;
   handleDelegationInput?: RealtimeVoiceGatewayControl["handleDelegationInput"];
   onWireEventType?: (eventType: string) => void;
   runAgentConsult: LifecycleBoundAgentConsultRunner;
@@ -147,8 +153,9 @@ export class OpenAIQuicksilverDelegationController {
       },
       onError: (error) => this.fail(error),
     });
-    this.completionClaimsAdopted = options.runAgentConsult.adoptCompletionClaims !== undefined;
-    options.runAgentConsult.adoptCompletionClaims?.();
+    this.completionClaimsAdopted =
+      !options.hostOwnedOutput && options.runAgentConsult.adoptCompletionClaims !== undefined;
+    if (!options.hostOwnedOutput) options.runAgentConsult.adoptCompletionClaims?.();
     if (options.signal.aborted) {
       this.onSessionAbort();
     } else {
@@ -166,7 +173,7 @@ export class OpenAIQuicksilverDelegationController {
     }
     const payload = rawDataToString(data);
     const event = parseOpenAIQuicksilverEvent(payload, this.options.model);
-    if (event) {
+    if (event && !this.suppressesHostOwnedEvent(event)) {
       if (event.kind === "session-closed") {
         this.handleEvent(event);
         return;
@@ -185,6 +192,7 @@ export class OpenAIQuicksilverDelegationController {
     // Media workers and browser WebRTC own audio; this controller owns delegation events.
     if (
       this.stopped ||
+      this.suppressesHostOwnedEvent(event) ||
       event.kind === "ignored" ||
       event.kind === "audio-cleared" ||
       event.kind === "audio"
@@ -227,8 +235,20 @@ export class OpenAIQuicksilverDelegationController {
         });
         this.delegations.resume();
       } else {
-        this.transcript.append(event);
-        this.options.onTranscript?.(event.role, event.text, event.kind === "transcript-done");
+        if (!this.options.hostOwnedOutput) {
+          this.transcript.append(event);
+        }
+        if (
+          this.options.hostOwnedOutput &&
+          event.kind === "transcript-done" &&
+          event.providerTurnId
+        ) {
+          this.options.onTranscript?.(event.role, event.text, true, {
+            providerTurnId: event.providerTurnId,
+          });
+        } else {
+          this.options.onTranscript?.(event.role, event.text, event.kind === "transcript-done");
+        }
       }
       return;
     }
@@ -263,10 +283,21 @@ export class OpenAIQuicksilverDelegationController {
 
   sendSessionContext(text: string, channel: "speakable" | "commentary"): void {
     const content = text.trim();
-    if (content) {
+    if (content && !this.options.hostOwnedOutput) {
       // Standalone speech must not become the result of whichever delegation is active.
       this.sendAppend(content, channel);
     }
+  }
+
+  private suppressesHostOwnedEvent(event: OpenAIQuicksilverInboundEvent): boolean {
+    return (
+      this.options.hostOwnedOutput === true &&
+      (event.kind === "audio" ||
+        event.kind === "audio-cleared" ||
+        event.kind === "delegation" ||
+        ((event.kind === "transcript-delta" || event.kind === "transcript-done") &&
+          event.role === "assistant"))
+    );
   }
 
   beginTranscriptDrain(disposition: "abort" | "detach"): void {

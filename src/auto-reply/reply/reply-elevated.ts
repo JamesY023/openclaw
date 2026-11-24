@@ -10,6 +10,10 @@ import { resolveAgentConfig } from "../../agents/agent-scope.js";
 import { getChannelPlugin, normalizeChannelId } from "../../channels/plugins/index.js";
 import { CHAT_CHANNEL_ORDER } from "../../channels/registry.js";
 import type { AgentElevatedAllowFromConfig, OpenClawConfig } from "../../config/config.js";
+import {
+  getCommandSenderAuthority,
+  hasCommandSenderAuthority,
+} from "../command-sender-authority.js";
 import { shouldUseFromAsSenderFallback } from "../sender-identity.js";
 import type { MsgContext } from "../templating.js";
 export { formatElevatedUnavailableMessage } from "./elevated-unavailable.js";
@@ -158,6 +162,13 @@ function isApprovedElevatedSender(params: {
   allowFrom?: AgentElevatedAllowFromConfig;
   fallbackAllowFrom?: Array<string | number>;
 }): boolean {
+  const boundGateway = hasCommandSenderAuthority(params.ctx);
+  const ctx: MsgContext = boundGateway
+    ? { SenderId: getCommandSenderAuthority(params.ctx)?.() }
+    : params.ctx;
+  if (boundGateway && !ctx.SenderId) {
+    return false;
+  }
   const configuredAllow = params.allowFrom?.[params.provider];
   const allowTokens = normalizeStringEntries(
     Array.isArray(configuredAllow) ? configuredAllow : params.fallbackAllowFrom,
@@ -169,9 +180,9 @@ function isApprovedElevatedSender(params: {
     return true;
   }
 
-  const senderId = normalizeOptionalString(params.ctx.SenderId);
-  const senderFrom = normalizeOptionalString(params.ctx.From);
-  const senderE164 = normalizeOptionalString(params.ctx.SenderE164);
+  const senderId = normalizeOptionalString(ctx.SenderId);
+  const senderFrom = normalizeOptionalString(ctx.From);
+  const senderE164 = normalizeOptionalString(ctx.SenderE164);
   const identityTokens = (value: string | undefined, includeStripped: boolean) =>
     value
       ? buildFormattedTokens({ formatAllowFrom: params.formatAllowFrom, value, includeStripped })
@@ -180,16 +191,15 @@ function isApprovedElevatedSender(params: {
   const fieldTokens: Record<ExplicitElevatedAllowField, Set<string>> = {
     id: identityTokens(senderId, true),
     from: identityTokens(
-      senderFrom &&
-        shouldUseFromAsSenderFallback({ from: senderFrom, chatType: params.ctx.ChatType })
+      senderFrom && shouldUseFromAsSenderFallback({ from: senderFrom, chatType: ctx.ChatType })
         ? senderFrom
         : undefined,
       true,
     ),
     e164: identityTokens(senderE164, false),
-    name: buildMutableTokens(params.ctx.SenderName),
-    username: buildMutableTokens(params.ctx.SenderUsername),
-    tag: buildMutableTokens(params.ctx.SenderTag),
+    name: buildMutableTokens(ctx.SenderName),
+    username: buildMutableTokens(ctx.SenderUsername),
+    tag: buildMutableTokens(ctx.SenderTag),
   };
   const senderIdentityTokens = new Set([
     ...fieldTokens.id,

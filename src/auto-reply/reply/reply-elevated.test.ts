@@ -1,4 +1,5 @@
 import { expect, it } from "vitest";
+import { withCommandSenderAuthority } from "../command-sender-authority.js";
 import type { MsgContext } from "../templating.js";
 import { resolveElevatedPermissions } from "./reply-elevated.js";
 
@@ -63,4 +64,26 @@ it.each<PermissionCase>([
     allowed,
     failures: allowed ? [] : [{ gate: "allowFrom", key: "tools.elevated.allowFrom.whatsapp" }],
   });
+});
+
+it("checks the current authenticated Gateway profile, without reading displayed identity", () => {
+  let current: string | undefined = "gateway-owner";
+  const caller = withCommandSenderAuthority(
+    { SenderId: "untrusted-label", SenderName: "Mutable name" },
+    () => current,
+  );
+  const check = (ctx: MsgContext, allowFrom = ["id:gateway-owner"]) =>
+    resolveElevatedPermissions({
+      cfg: { tools: { elevated: { allowFrom: { webchat: allowFrom } } } },
+      agentId: "jessica",
+      provider: "webchat",
+      ctx,
+    }).allowed;
+  expect(check(caller)).toBe(true);
+  expect(check(caller, ["name:Mutable name"])).toBe(false);
+  current = "other-profile";
+  expect(check({ ...caller, SenderId: "gateway-owner" })).toBe(false);
+  current = undefined;
+  expect(check(caller, ["*"])).toBe(false);
+  expect(check(withCommandSenderAuthority({ SenderId: "gateway-owner" }, undefined))).toBe(false);
 });

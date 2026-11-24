@@ -12,7 +12,7 @@ export type OpenAIQuicksilverInboundEvent =
   | { kind: "audio-cleared" }
   | { kind: "audio"; data: string }
   | { kind: "transcript-delta"; role: "user" | "assistant"; text: string }
-  | { kind: "transcript-done"; role: "user" | "assistant"; text: string }
+  | { kind: "transcript-done"; role: "user" | "assistant"; text: string; providerTurnId?: string }
   | { kind: "delegation"; id: string; prompt?: string }
   | { kind: "error"; fatalAuth: boolean }
   | { kind: "unknown"; eventType: string };
@@ -48,12 +48,17 @@ const framelessSchemas = new Map<string, z.ZodType<OpenAIQuicksilverInboundEvent
     "turn.done",
     z
       .object({
-        turn: z.object({ role: z.enum(["user", "assistant"]), transcript: z.string() }),
+        turn: z.object({
+          id: z.string().optional(),
+          role: z.enum(["user", "assistant"]),
+          transcript: z.string(),
+        }),
       })
       .transform(({ turn }) => ({
         kind: "transcript-done",
         role: turn.role,
         text: turn.transcript,
+        ...(turn.id?.trim() ? { providerTurnId: turn.id } : {}),
       })),
   ],
   [

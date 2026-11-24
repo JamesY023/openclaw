@@ -3,6 +3,14 @@ import path from "node:path";
 import { DatabaseSync, StatementSync } from "node:sqlite";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  createAudioPeer,
+  createGatewayHarness,
+} from "../../../../extensions/openai/realtime-quicksilver-gateway.test-support.js";
+import {
+  createCallResponse,
+  emitSideband,
+} from "../../../../extensions/openai/realtime-quicksilver.test-helpers.js";
+import {
   awaitGateBeforeSettlement,
   createDeferred,
   withinTest,
@@ -15,7 +23,9 @@ import {
 import { useAutoCleanupTempDirTracker } from "../../../../test/helpers/temp-dir.js";
 import { captureRuntimeConfigAsyncReader } from "../../../config/io.runtime.js";
 import {
+  appendTranscriptMessage,
   loadSessionEntry,
+  loadTranscriptEvents,
   replaceSessionEntry,
   replaceSessionEntrySync,
 } from "../../../config/sessions/session-accessor.js";
@@ -23,6 +33,7 @@ import { composeSessionSourceAssertion } from "../../../config/sessions/session-
 import type { OpenClawConfig } from "../../../config/types.openclaw.js";
 import { readDatabasePathIdentitySync } from "../../../infra/sqlite-worker-identity.js";
 import * as operationAdmission from "../../../infra/sqlite-worker-operation-admission.js";
+import * as audioTranscode from "../../../media/audio-transcode.js";
 import { captureSessionTarget } from "../../../sessions/session-controller.lifecycle.js";
 import { closeOpenClawAgentDatabasesForTest } from "../../../state/openclaw-agent-db-lifecycle.js";
 import { getOpenClawAgentDatabaseIfOpen } from "../../../state/openclaw-agent-db.js";
@@ -34,6 +45,7 @@ import * as voiceSessions from "../../../talk/client-voice-session.js";
 import { clientVoiceSessionTesting } from "../../../talk/client-voice-session.test-support.js";
 import { captureEnv, setTestEnvValue } from "../../../test-utils/env.js";
 import { cleanupSessionStateForTest } from "../../../test-utils/session-state-cleanup.js";
+import * as speech from "../../../tts/tts-synthesis.js";
 import { registerChatAbortController } from "../../chat-abort.js";
 import type { ChatSendInternalOptions } from "../../server-methods/chat-send-options.js";
 import type {
@@ -44,7 +56,12 @@ import { createGatewayRequestContext } from "../../server-request-context.js";
 import { makeContextParams } from "../../server-request-context.test-support.js";
 import { resolveSessionMutationAuthorizationAsync } from "../../session-sharing-authorization-async.js";
 import { createIdleRelayProvider } from "../relay/index.test-support.js";
-import { closeRelaySession, registerTalkRealtimeRelayAgentRun } from "../relay/operations.js";
+import {
+  acknowledgeTalkRealtimeRelayMark,
+  closeRelaySession,
+  registerTalkRealtimeRelayAgentRun,
+  submitTalkRealtimeRelayToolResult,
+} from "../relay/operations.js";
 import { createTalkRealtimeRelaySession } from "../relay/session-create.js";
 import { relaySessions } from "../relay/state.js";
 import { prepareTalkSessionTarget } from "../session-target.js";
@@ -85,7 +102,12 @@ vi.mock("../../server-methods/chat-send-handler.js", () => ({
         assertWorkAdmissionCurrent,
       });
       assertCurrent();
-      chat.dispatched();
+      chat.dispatched(
+        request.params,
+        options.transcript,
+        options.prepareAssistantTranscriptMessage,
+        release,
+      );
       request.respond(true, { runId: "queued-consult", status: "started" });
     } catch (error) {
       release?.();
@@ -232,6 +254,177 @@ describe("voice consult registration authority", () => {
           }
         }, attachment),
     );
+  });
+
+  it("binds the hosted question alone to the hidden origin row", async () => {
+    const context = consultContext();
+    const question = "Check the fixture status";
+    const contextText = "Background only";
+    const params = {
+      ...consultParams("bound-origin"),
+      args: { question, context: contextText, responseStyle: "brief" },
+    };
+    const client = { connId: "bound-origin" };
+    const { authorization } = await authorizeConsult(params, context, client as never);
+    const { respond, pending } = toolCall(params, context, authorization, client as never);
+    await pending;
+    expect(respond).toHaveBeenCalledWith(true, expect.any(Object), undefined);
+    expect(chat.dispatched).toHaveBeenCalledWith(
+      expect.objectContaining({
+        message: `${question}\n\nContext:\n${contextText}\n\nSpoken style:\nbrief`,
+        systemInputProvenance: { kind: "internal_system", sourceTool: "openclaw_agent_consult" },
+      }),
+      { display: false, excludeFromContext: true, text: question },
+      expect.any(Function),
+      expect.any(Function),
+    );
+  });
+
+  it("speaks the durable OAuth Talk answer once after the current browser call completes", async () => {
+    const context = consultContext();
+    const config = context.getRuntimeConfig();
+    const connId = "owned-subscription-call";
+    const sessionTarget = await prepareTalkSessionTarget(config, scope.sessionKey);
+    let providerHarness: ReturnType<typeof createGatewayHarness> | undefined;
+    const provider = createIdleRelayProvider((request) => {
+      providerHarness = createGatewayHarness({
+        ...request,
+        model: "gpt-live-1-codex",
+        resolveAuth: async () => ({ type: "oauth", token: "synthetic", accountId: "synthetic" }),
+        createPeer: async () => createAudioPeer(),
+        fetchImpl: async () => createCallResponse("v=answer\r\n", "rtc_owned_fixture"),
+      });
+      return providerHarness.bridge;
+    });
+    const { relaySessionId } = createTalkRealtimeRelaySession({
+      context,
+      connId,
+      sessionTarget,
+      cfg: config,
+      provider: { ...provider, id: "openai" },
+      providerConfig: {},
+      tools: [],
+      instructions: "brief",
+      controlSource: "delegation",
+      hostOwnedOutput: true,
+    });
+    const relay = relaySessions.get(relaySessionId)!;
+    const registration = registerConsult(sessionTarget, connId);
+    const requestSpeech = vi.spyOn(speech, "synthesizeTalkSpeech").mockResolvedValue({
+      success: true,
+      audioBuffer: Buffer.from([1]),
+      fileExtension: ".mp3",
+    });
+    vi.spyOn(audioTranscode, "transcodeAudioBufferToTalkPcm").mockResolvedValue(
+      Buffer.alloc(960, 1),
+    );
+    const events = () =>
+      vi.mocked(context.broadcastToConnIds).mock.calls.map(
+        ([, value]) =>
+          value as {
+            type?: string;
+            outputOwnership?: string;
+            callId?: string;
+            args?: unknown;
+            markName?: string;
+          },
+      );
+    try {
+      await vi.waitFor(() => expect(providerHarness?.getSocket()).toBeDefined());
+      const socket = providerHarness!.getSocket();
+      emitSideband(socket, { type: "session.started", session: {} });
+      await vi.waitFor(() =>
+        expect(events()).toContainEqual(
+          expect.objectContaining({ type: "ready", outputOwnership: "host" }),
+        ),
+      );
+      const utterance = {
+        type: "turn.done",
+        turn: { id: "provider-owned-turn", role: "user", transcript: "Check the fixture" },
+      };
+      emitSideband(socket, utterance);
+      emitSideband(socket, utterance);
+      await vi.waitFor(() =>
+        expect(events().filter(({ type }) => type === "toolCall")).toHaveLength(1),
+      );
+      const call = events().find(({ type }) => type === "toolCall")!;
+      const params = {
+        sessionKey: scope.sessionKey,
+        relaySessionId,
+        callId: call.callId!,
+        name: "openclaw_agent_consult",
+        args: call.args,
+      };
+      const client = { connId };
+      const { authorization } = await authorizeConsult(params, context, client as never);
+      const { pending, respond } = toolCall(params, context, authorization, client as never);
+      await pending;
+      expect(respond.mock.lastCall?.[0], respond.mock.lastCall?.[2]?.message).toBe(true);
+      const [, , prepare, release] = chat.dispatched.mock.lastCall! as [
+        unknown,
+        unknown,
+        NonNullable<ChatSendInternalOptions["prepareAssistantTranscriptMessage"]>,
+        () => void,
+      ];
+      const text = "The durable fixture answer";
+      const final = prepare(
+        {
+          role: "assistant",
+          stopReason: "stop",
+          content: [{ type: "text", text }],
+          __openclaw: { runId: "queued-consult" },
+        },
+        text,
+      );
+      const transcript = {
+        ...scope,
+        storePath: sessionTarget.storePath,
+        sessionId: "original-consult-session",
+      };
+      expect(relay.ownedOutput?.finals.get(call.callId!)).toMatchObject({
+        runId: "queued-consult",
+        sessionId: transcript.sessionId,
+      });
+      const persisted = await appendTranscriptMessage(transcript, {
+        message: final,
+        eventId: "captured-terminal",
+      });
+      expect(persisted).toMatchObject({ messageId: "captured-terminal", appended: true });
+      release();
+      await submitTalkRealtimeRelayToolResult({
+        relaySessionId,
+        connId,
+        callId: call.callId!,
+        result: { text: "Browser claimed a different answer" },
+      });
+      await vi.waitFor(() => expect(relay.ownedOutput?.playback?.phase).toBe("awaiting"), {
+        timeout: 12_000,
+      });
+      expect(events().find(({ type }) => type === "mark")?.markName).toMatch(/^owned-talk:/u);
+      expect(requestSpeech).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ text }));
+      const ownedRows = async () =>
+        (await loadTranscriptEvents(transcript)).filter(
+          (event) => event.type === "message" && event.id === "voice-owned:captured-terminal",
+        );
+      expect(await ownedRows()).toHaveLength(0);
+      const markName = events().find(({ type }) => type === "mark")!.markName!;
+      await acknowledgeTalkRealtimeRelayMark({
+        relaySessionId,
+        connId,
+        markName,
+        outcome: "completed",
+      });
+      await acknowledgeTalkRealtimeRelayMark({
+        relaySessionId,
+        connId,
+        markName,
+        outcome: "completed",
+      });
+      expect(await ownedRows()).toHaveLength(1);
+    } finally {
+      await closeRelaySession(relay, "completed");
+      registration.cleanup();
+    }
   });
 
   it.for(["requester", "session"] as const)(

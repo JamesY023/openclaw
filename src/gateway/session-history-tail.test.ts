@@ -49,6 +49,71 @@ function recordingReaders(record: (page: { messages: unknown[] }) => void) {
   };
 }
 
+it("keeps an acknowledged Talk original out of older cursor and anchor pages", async () => {
+  await withHistoryState(async (state) => {
+    const scope = historyTarget(state, "owned-talk-history");
+    await replaceTranscriptEvents(scope, [
+      { type: "session", version: 3, id: scope.sessionId },
+      messageEvent("question", { role: "user", content: "Original voice question" }),
+      messageEvent(
+        "answer",
+        {
+          role: "assistant",
+          stopReason: "stop",
+          content: "Spoken answer",
+          __openclaw: { runId: "owned-talk-run" },
+        },
+        "question",
+      ),
+      messageEvent("later", { role: "user", content: "Later question" }, "answer"),
+      messageEvent(
+        "voice-owned:answer",
+        {
+          role: "assistant",
+          stopReason: "stop",
+          api: "realtime",
+          model: "realtime-voice",
+          content: [{ type: "text", text: "Spoken answer" }],
+          provenance: { kind: "realtime_voice", sourceChannel: "talk" },
+          __openclaw: {
+            replacesRunId: "owned-talk-run",
+            replacesMessageId: "answer",
+            voiceSessionId: "owned-voice-session",
+            playbackId: "owned-playback",
+          },
+        },
+        "later",
+      ),
+    ]);
+    await waitForSessionTranscriptProjection(scope);
+    const older = await readIncrementalChatHistoryTail({
+      ...tailDefaults,
+      readScope: scope,
+      beforeSeq: 3,
+      preserveProjectionContext: true,
+    });
+    expectMessageIds(older.projected, ["question"]);
+    const anchor = await readChatHistoryPageKernel(
+      {
+        entry: undefined,
+        provider: undefined,
+        sessionId: scope.sessionId,
+        storePath: scope.storePath,
+        sessionAgentId: scope.agentId,
+        canonicalKey: scope.sessionKey,
+        max: 1,
+        maxHistoryBytes: 1024 * 1024,
+        responseHistoryBytes: 1024 * 1024,
+        effectiveMaxChars: 8_000,
+        offset: undefined,
+        messageId: "answer",
+      },
+      { readers: sessionTranscriptReaders, readOnly: true },
+    );
+    expectMessageIds(anchor.messages, []);
+  });
+});
+
 it.each([
   { offset: 0, hiddenHead: 0 },
   { offset: 20, hiddenHead: 160 },

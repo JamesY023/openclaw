@@ -196,8 +196,10 @@ export type RealtimeVoiceBridgeCallbacks = {
     role: RealtimeVoiceRole,
     text: string,
     isFinal: boolean,
-    metadata?: { textMode: "snapshot" },
+    metadata?: { textMode?: "snapshot"; providerTurnId?: string },
   ) => void;
+  /** Confirmation from the provider bridge after its native authentication. */
+  onOutputOwnership?: (owner: "host" | "provider") => void;
   /** Synchronously admits native control; only consult permits task fallthrough. Respond is call-bound. */
   handleDelegationInput?: (
     text: string,
@@ -255,6 +257,7 @@ export type RealtimeVoiceAgentConsultRunner = (params: {
 }) => Promise<{ text: string }>;
 
 export type RealtimeVoiceBridgeCreateRequest = RealtimeVoiceBridgeCallbacks & {
+  hostOwnedOutput?: boolean;
   cfg?: OpenClawConfig;
   /** Host-selected agent scope for provider auth and agent-owned bridge state. */
   agentId?: string;

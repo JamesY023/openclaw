@@ -551,6 +551,31 @@ export function buildOpenAIRealtimeVoiceProvider(
           : {}),
       };
     },
+    resolveBrowserSessionTransport: async ({
+      cfg,
+      providerConfig,
+      agentId,
+      model,
+      hostOwnedOutput,
+    }) => {
+      const config = normalizeProviderConfig(providerConfig);
+      const effectiveModel = model ?? config.model;
+      if (
+        !hostOwnedOutput ||
+        !effectiveModel ||
+        !isOpenAIGptLiveSubscriptionModel(effectiveModel) ||
+        config.baseUrl ||
+        config.azureEndpoint ||
+        config.azureDeployment
+      ) {
+        return undefined;
+      }
+      const auth = await resolveOpenAIQuicksilverBridgeAuth(
+        { configuredApiKey: config.apiKey, cfg, agentId, model: effectiveModel },
+        context,
+      );
+      return auth.type === "oauth" ? "gateway-relay" : undefined;
+    },
     isGatewayRelayConfigured: ({ cfg, providerConfig, agentId }) => {
       const config = normalizeProviderConfig(providerConfig);
       if (!isOpenAIGptLiveModel(config.model)) {

@@ -159,6 +159,13 @@ export function createRelayAgentRunRegistration(
         if (run.detached) {
           return message;
         }
+        if (session.ownedOutput) {
+          if (callId && transcriptSession && isTalkAgentConsultFinalMessage(message)) {
+            // Keep the accepted run and incarnation through the browser's final-result round trip.
+            session.ownedOutput.finals.set(callId, { runId: params.runId, ...transcriptSession });
+          }
+          return message;
+        }
         if (transcriptSession && isTalkAgentConsultFinalMessage(message)) {
           const answer = structuredClone(message);
           session.unspokenAnswers ??= new Map();

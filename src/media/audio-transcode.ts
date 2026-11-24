@@ -28,6 +28,20 @@ function normalizeOutputFileName(value?: string): string {
   return DEFAULT_OUTPUT_FILE_NAME;
 }
 
+function normalizeAudioInputExtension(params: {
+  inputExtension?: string;
+  inputFileName?: string;
+}): string {
+  const fromExtension = params.inputExtension?.trim();
+  const candidate = fromExtension
+    ? fromExtension.startsWith(".")
+      ? fromExtension
+      : `.${fromExtension}`
+    : path.extname(params.inputFileName ?? "");
+  const normalized = candidate.toLowerCase();
+  return /^\.[a-z0-9]{1,12}$/.test(normalized) ? normalized : ".audio";
+}
+
 /** Transcodes arbitrary audio input into mono Opus using a scoped temp workspace. */
 export async function transcodeAudioBufferToOpus(params: {
   audioBuffer: Buffer;
@@ -55,14 +69,7 @@ export async function transcodeAudioBufferToOpus(params: {
       prefix: normalizeTempPrefix(params.tempPrefix),
     },
     async (workspace) => {
-      const fromExtension = params.inputExtension?.trim();
-      const candidate = fromExtension
-        ? fromExtension.startsWith(".")
-          ? fromExtension
-          : `.${fromExtension}`
-        : path.extname(params.inputFileName ?? "");
-      const normalized = candidate.toLowerCase();
-      const inputExtension = /^\.[a-z0-9]{1,12}$/.test(normalized) ? normalized : ".audio";
+      const inputExtension = normalizeAudioInputExtension(params);
       const inputPath = await workspace.store.write(`input${inputExtension}`, params.audioBuffer, {
         durable: false,
       });
@@ -182,4 +189,68 @@ async function runAfconvert(args: string[], timeoutMs: number): Promise<string |
   } catch (err) {
     return err instanceof Error ? err.message : String(err);
   }
+}
+
+/** Decode one bounded Talk utterance without accepting a truncated waveform. */
+export async function transcodeAudioBufferToTalkPcm(params: {
+  audioBuffer: Buffer;
+  inputExtension?: string;
+  timeoutMs?: number;
+}): Promise<Buffer> {
+  const maxBytes = 60 * 24_000 * 2;
+  if (params.audioBuffer.length === 0 || params.audioBuffer.length > 50 * 1024 * 1024) {
+    throw new Error("Talk synthesis audio is empty or too large");
+  }
+  return await withTempWorkspace(
+    { rootDir: resolvePreferredOpenClawTmpDir(), prefix: "talk-pcm-" },
+    async (workspace) => {
+      const inputPath = await workspace.store.write(
+        `input${normalizeAudioInputExtension(params)}`,
+        params.audioBuffer,
+        { durable: false },
+      );
+      await writeExternalFileWithinRoot({
+        rootDir: workspace.dir,
+        path: "output.pcm",
+        write: async (outputPath) => {
+          await runFfmpeg(
+            [
+              "-hide_banner",
+              "-loglevel",
+              "error",
+              "-y",
+              "-xerror",
+              "-i",
+              inputPath,
+              "-vn",
+              "-sn",
+              "-dn",
+              "-ac",
+              "1",
+              "-ar",
+              "24000",
+              "-c:a",
+              "pcm_s16le",
+              "-f",
+              "s16le",
+              "-fs",
+              String(maxBytes + 2),
+              outputPath,
+            ],
+            { timeoutMs: params.timeoutMs ?? 10_000 },
+          );
+        },
+      });
+      const pcm = await workspace.read("output.pcm");
+      if (
+        !pcm.length ||
+        pcm.length % 2 !== 0 ||
+        pcm.length > maxBytes ||
+        !pcm.some((byte) => byte !== 0)
+      ) {
+        throw new Error("Talk synthesis audio is empty, invalid, or exceeds sixty seconds");
+      }
+      return pcm;
+    },
+  );
 }

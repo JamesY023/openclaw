@@ -79,7 +79,7 @@ function respondOk(respond: RespondFn, payload: unknown = { ok: true }) {
   respond(true, payload, undefined);
 }
 
-export const talkSessionHandlers: GatewayRequestHandlers = {
+export const talkSessionHandlers = {
   "talk.session.create": defineValidatedGatewayHandler(
     "talk.session.create",
     validateTalkSessionCreateParams,
@@ -337,6 +337,7 @@ export const talkSessionHandlers: GatewayRequestHandlers = {
               provider: resolution.provider,
               providerConfig,
               controlSource,
+              hostOwnedOutput: params.hostOwnedOutput,
               capabilities,
               clientCapabilities: params.capabilities,
               voiceChangeId: params.voiceChangeId,
@@ -507,16 +508,17 @@ export const talkSessionHandlers: GatewayRequestHandlers = {
   "talk.session.acknowledgeMark": defineValidatedGatewayHandler(
     "talk.session.acknowledgeMark",
     validateTalkSessionAcknowledgeMarkParams,
-    ({ params, respond, client }) => {
+    async ({ params, respond, client }) => {
       const session = getUnifiedTalkSession(params.sessionId);
       if (session.kind !== "realtime-relay") {
         respondInvalidRequest(respond, "talk.session.acknowledgeMark requires realtime relay");
         return;
       }
-      acknowledgeTalkRealtimeRelayMark({
+      await acknowledgeTalkRealtimeRelayMark({
         relaySessionId: session.relaySessionId,
         connId: requireUnifiedTalkSessionConn(session, client?.connId),
         markName: params.markName,
+        ...(params.outcome ? { outcome: params.outcome } : {}),
       });
       respondOk(respond);
     },
@@ -641,4 +643,4 @@ export const talkSessionHandlers: GatewayRequestHandlers = {
     },
     talkSessionError,
   ),
-};
+} satisfies GatewayRequestHandlers;

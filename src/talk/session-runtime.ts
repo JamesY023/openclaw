@@ -275,6 +275,9 @@ export function createRealtimeVoiceBridgeSession(
         params.onTranscript?.(...args);
       }
     },
+    onOutputOwnership: (owner) => {
+      if (isAdmitting()) params.onOutputOwnership?.(owner);
+    },
     ...(handleDelegationInput
       ? {
           handleDelegationInput: (text, respond) => {
@@ -357,6 +360,7 @@ export function createRealtimeVoiceBridgeSession(
     instructions: params.instructions,
     language: params.language,
     autoRespondToAudio: params.autoRespondToAudio,
+    hostOwnedOutput: params.hostOwnedOutput,
     interruptResponseOnInputAudio: params.interruptResponseOnInputAudio,
     tools: params.tools,
     ...wrapCurrentPluginInstance(bridgeCallbacks),

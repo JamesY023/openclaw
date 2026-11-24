@@ -9,6 +9,7 @@ import type { RealtimeVoiceAgentControlResult } from "../../../talk/agent-run-co
 import { readSpeakableRealtimeVoiceToolResult } from "../../../talk/consult-question.js";
 import type { RealtimeVoiceForcedConsultHandle } from "../../../talk/forced-consult-coordinator.js";
 import type { RealtimeVoiceToolResultOptions } from "../../../talk/provider-types.js";
+import { cancelOwnedTalkPlayback, deliverOwnedTalkResult } from "./owned-output.js";
 import {
   broadcastToolResultToOwner,
   clearRelayAgentToolCall,
@@ -150,55 +151,93 @@ export function submitRelayAgentControlProviderResults(
   };
 }
 
-export function scheduleForcedAgentConsult(session: RelaySession, question: string): void {
-  if (session.harness.forcedConsults.hasRecentNativeConsult(question)) {
-    return;
+export function scheduleForcedAgentConsult(
+  session: RelaySession,
+  question: string,
+  providerTurnId?: string,
+): void {
+  const owned = session.ownedOutput;
+  let ownedContext: { generation: number; turnId: string } | undefined;
+  if (owned) {
+    if (!question.trim() || !providerTurnId || owned.inputTurns.has(providerTurnId)) return;
+    if (owned.inputTurns.size >= 1024) {
+      session.failSession("Talk user-turn identity limit reached");
+      return;
+    }
+    owned.inputTurns.add(providerTurnId);
+    cancelOwnedTalkPlayback(session);
+    owned.generation++;
+    const previous = session.harness.talk.activeTurnId;
+    if (previous) {
+      session.harness.talk.endTurn({ turnId: previous, payload: { reason: "new-user-turn" } });
+    }
+    const turnId = session.harness.talk.startTurn({
+      turnId: `owned:${randomUUID()}`,
+      payload: {},
+    }).turnId;
+    ownedContext = { generation: owned.generation, turnId };
+  } else {
+    if (session.harness.forcedConsults.hasRecentNativeConsult(question)) return;
+    session.harness.forcedConsults.clearPending();
   }
-  session.harness.forcedConsults.clearPending();
-  const handle = session.harness.forcedConsults.prepare(question);
+  const handle = session.harness.forcedConsults.prepare(
+    question,
+    ownedContext
+      ? { id: `owned:${session.id}:${providerTurnId}`, context: ownedContext }
+      : undefined,
+  );
   if (!handle) {
     return;
   }
-  session.harness.forcedConsults.schedule(handle, FORCED_CONSULT_FALLBACK_DELAY_MS, () => {
-    if (!relaySessions.has(session.id)) {
-      return;
-    }
-    if (!session.toolCalls.tryAdmit([handle.id])) {
-      return;
-    }
-    const turnId = ensureRelayTurn(session);
-    const callId = handle.id;
-    const itemId = `forced-consult-item-${randomUUID()}`;
-    session.harness.forcedConsults.markStarted(handle);
-    session.harness.handleBargeIn(
-      { audioPlaybackActive: true, force: true },
-      noFallbackRelayOutputFlush,
-    );
-    broadcastToOwner(session, {
-      type: "toolCall",
-      itemId,
-      callId,
-      name: REALTIME_VOICE_AGENT_CONSULT_TOOL_NAME,
-      forced: true,
-      args: {
-        question: handle.question,
-        context:
-          "The realtime provider produced a final user transcript without invoking openclaw_agent_consult, so OpenClaw is forcing the consult for realtime Talk.",
-        responseStyle: "Reply in a concise spoken tone.",
-      },
-      talkEvent: session.harness.talk.emit({
-        type: "tool.call",
+  session.harness.forcedConsults.schedule(
+    handle,
+    owned ? 0 : FORCED_CONSULT_FALLBACK_DELAY_MS,
+    () => {
+      if (
+        !relaySessions.has(session.id) ||
+        (ownedContext && owned?.generation !== ownedContext.generation)
+      ) {
+        return;
+      }
+      if (!session.toolCalls.tryAdmit([handle.id])) {
+        return;
+      }
+      const turnId = ownedContext?.turnId ?? ensureRelayTurn(session);
+      const callId = handle.id;
+      const itemId = `forced-consult-item-${randomUUID()}`;
+      session.harness.forcedConsults.markStarted(handle);
+      if (!owned) {
+        session.harness.handleBargeIn(
+          { audioPlaybackActive: true, force: true },
+          noFallbackRelayOutputFlush,
+        );
+      }
+      broadcastToOwner(session, {
+        type: "toolCall",
         itemId,
         callId,
-        turnId,
-        payload: {
-          name: REALTIME_VOICE_AGENT_CONSULT_TOOL_NAME,
-          args: { question: handle.question },
-          forced: true,
+        name: REALTIME_VOICE_AGENT_CONSULT_TOOL_NAME,
+        forced: true,
+        args: {
+          question: handle.question,
+          context:
+            "The realtime provider produced a final user transcript without invoking openclaw_agent_consult, so OpenClaw is forcing the consult for realtime Talk.",
+          responseStyle: "Reply in a concise spoken tone.",
         },
-      }),
-    });
-  });
+        talkEvent: session.harness.talk.emit({
+          type: "tool.call",
+          itemId,
+          callId,
+          turnId,
+          payload: {
+            name: REALTIME_VOICE_AGENT_CONSULT_TOOL_NAME,
+            args: { question: handle.question },
+            forced: true,
+          },
+        }),
+      });
+    },
+  );
 }
 
 function drainForcedTerminalProviderResults(
@@ -359,7 +398,11 @@ export function submitForcedTalkRealtimeRelayToolResult(
   const suppressResponse = params.options?.suppressResponse === true;
   const final = params.options?.willContinue !== true;
   if (!final) {
-    if (!suppressResponse && asOptionalRecord(params.result)?.status === "working") {
+    if (
+      !session.ownedOutput &&
+      !suppressResponse &&
+      asOptionalRecord(params.result)?.status === "working"
+    ) {
       session.bridge.sendUserMessage(FORCED_CONSULT_CHECKING_PROMPT);
     }
     broadcastToolResultToOwner(session, {
@@ -371,6 +414,15 @@ export function submitForcedTalkRealtimeRelayToolResult(
     });
     return;
   }
+  const ownedContext = forcedConsult.context as
+    | { generation?: number; turnId?: string }
+    | undefined;
+  const hostFinal =
+    session.ownedOutput &&
+    ownedContext?.turnId &&
+    session.ownedOutput.generation === ownedContext.generation &&
+    session.ownedOutput.finals.get(callId);
+  session.ownedOutput?.finals.delete(callId);
   const text = readSpeakableRealtimeVoiceToolResult(params.result, {
     maxChars: FORCED_CONSULT_RESULT_MAX_CHARS,
   });
@@ -394,7 +446,19 @@ export function submitForcedTalkRealtimeRelayToolResult(
       return;
     }
     const hasNativeCalls = session.harness.forcedConsults.nativeCallIds(forcedConsult).length > 0;
-    if (!suppressResponse && text && (!hasNativeCalls || providerOptions)) {
+    if (
+      !suppressResponse &&
+      hostFinal &&
+      ownedContext?.turnId &&
+      session.ownedOutput?.generation === ownedContext.generation
+    ) {
+      deliverOwnedTalkResult(session, hostFinal, ownedContext.turnId);
+    } else if (
+      !session.ownedOutput &&
+      !suppressResponse &&
+      text &&
+      (!hasNativeCalls || providerOptions)
+    ) {
       session.bridge.sendUserMessage(buildForcedConsultSpeechPrompt(text));
     }
     broadcastToolResultToOwner(session, {

@@ -1228,6 +1228,7 @@ export const databaseWorkerCoreTestFiles = [
   "src/talk/agent-consult-runtime.test.ts",
   "src/talk/client-voice-session-lifecycle.test.ts",
   "src/talk/client-voice-session.digest-source.test.ts",
+  "src/talk/client-voice-session.owned.test.ts",
   "src/talk/client-voice-session.test.ts",
   "src/talk/client-voice-session.worker.test.ts",
   "src/tts/tts-summary.selection.test.ts",

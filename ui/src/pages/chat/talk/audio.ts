@@ -1,3 +1,4 @@
+import { createDeferredCore } from "../../../../../src/shared/deferred.js";
 import { base64ToBytes } from "../../../lib/bytes-base64.ts";
 import { listen } from "../../../lib/reactive/listener.ts";
 
@@ -215,6 +216,9 @@ export class RealtimeTalkPcmOutputQueue {
   private playhead = 0;
   private readonly sources = new Set<AudioBufferSourceNode>();
   private sourceListeners: AbortController | null = null;
+  private pendingDrain:
+    | ReturnType<typeof createDeferredCore<"completed" | "cancelled">>
+    | undefined;
 
   open(sampleRateHz: number): void {
     this.context = new AudioContext({ sampleRate: sampleRateHz });
@@ -281,10 +285,21 @@ export class RealtimeTalkPcmOutputQueue {
     const source = outputContext.createBufferSource();
     this.sources.add(source);
     this.sourceListeners ??= new AbortController();
-    listen(source, "ended", () => this.sources.delete(source), {
-      once: true,
-      signal: this.sourceListeners.signal,
-    });
+    listen(
+      source,
+      "ended",
+      () => {
+        if (this.sources.delete(source) && this.sources.size === 0) {
+          const drain = this.pendingDrain;
+          this.pendingDrain = undefined;
+          drain?.resolve("completed");
+        }
+      },
+      {
+        once: true,
+        signal: this.sourceListeners.signal,
+      },
+    );
     source.buffer = buffer;
     source.connect(outputContext.destination);
     source.start(startAt);
@@ -292,10 +307,21 @@ export class RealtimeTalkPcmOutputQueue {
     return "queued";
   }
 
+  drain(): Promise<"completed" | "cancelled"> {
+    if (!this.isPlaying) {
+      return Promise.resolve("completed");
+    }
+    this.pendingDrain ??= createDeferredCore<"completed" | "cancelled">();
+    return this.pendingDrain.promise;
+  }
+
   stop(): void {
     // Release ownership first so synchronous or late `ended` events from stopped
     // sources cannot affect audio queued by a replacement playback turn.
     const sources = [...this.sources];
+    const drain = this.pendingDrain;
+    this.pendingDrain = undefined;
+    drain?.resolve("cancelled");
     this.sourceListeners?.abort();
     this.sourceListeners = null;
     this.sources.clear();

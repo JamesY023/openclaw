@@ -35,6 +35,11 @@ import {
   submitRelayAgentControlProviderResults,
 } from "./forced-consults.js";
 import {
+  acknowledgeOwnedTalkPlayback,
+  cancelOwnedTalkPlayback,
+  type OwnedTalkPlaybackOutcome,
+} from "./owned-output.js";
+import {
   broadcastToolResultToOwner,
   clearRelayAgentToolCall,
   completeAfterToolResultSubmissions,
@@ -117,6 +122,7 @@ export function closeRelaySession(
     completion: completion.promise,
   };
   session.closing = closing;
+  cancelOwnedTalkPlayback(session);
   const close = async (admissionFailure?: { error: unknown }) => {
     try {
       if (admissionFailure) {
@@ -267,8 +273,13 @@ export function acknowledgeTalkRealtimeRelayMark(params: {
   relaySessionId: string;
   connId: string;
   markName: string;
-}): void {
-  getRelaySession(params.relaySessionId, params.connId).bridge.acknowledgeMark(params.markName);
+  outcome?: OwnedTalkPlaybackOutcome;
+}): void | Promise<void> {
+  const session = getRelaySession(params.relaySessionId, params.connId);
+  if (params.markName.startsWith("owned-talk:")) {
+    return acknowledgeOwnedTalkPlayback(session, params.markName, params.outcome).then(() => {});
+  }
+  session.bridge.acknowledgeMark(params.markName);
 }
 
 export function submitTalkRealtimeRelayToolResult(params: {
@@ -575,6 +586,7 @@ export async function cancelTalkRealtimeRelayTurn(params: {
   if (session.outputOwnership.phase !== "unowned" && session.outputOwnership.turnId !== turnId) {
     return { status: "stale" as const };
   }
+  cancelOwnedTalkPlayback(session, turnId);
   const reason = params.reason ?? "client-cancelled";
   if (reason !== "barge-in") {
     cancelTalkVoiceSessionChange(session.id, session.connId, session.sessionTarget.agentId);

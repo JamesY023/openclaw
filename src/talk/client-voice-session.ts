@@ -8,11 +8,15 @@ import { appendExpectedSessionTranscriptTurn } from "../config/sessions/session-
 import type { SessionTranscriptWriteScope } from "../config/sessions/session-accessor.types.js";
 import { acquireSessionActorStorage } from "../config/sessions/session-actor-storage-acquisition.js";
 import { runWithSessionActorStorage } from "../config/sessions/session-actor-storage-binding.js";
-import { withSessionEntryReadOnlyInWorker } from "../config/sessions/session-entry-read-runtime.js";
+import {
+  readSessionEntryReadOnlyInWorker,
+  withSessionEntryReadOnlyInWorker,
+} from "../config/sessions/session-entry-read-runtime.js";
 import { composeSessionSourceAssertion } from "../config/sessions/session-source-authority.js";
 import { resolveUnsuffixedSqliteTargetFromSessionStorePath } from "../config/sessions/session-sqlite-target-paths.js";
 import type { InternalSessionEntry } from "../config/sessions/types.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
+import { resolveSessionStoreIdentity } from "../gateway/session-store-key.js";
 import {
   onTrustedInternalDiagnosticEvent,
   onTrustedToolExecutionEvent,
@@ -58,8 +62,10 @@ import {
   type ClientVoiceSessionWriter,
 } from "./client-voice-session-write.js";
 import type { VoiceSessionMutation } from "./client-voice-session-write.kernel.js";
+import type { OwnedRelayPlayback } from "./client-voice-transcript.owned.js";
 import {
   buildPersistedVoiceMessage,
+  VOICE_TRANSCRIPT_QUEUE_POLICY,
   VoiceTranscriptOperationRegistry,
   normalizeVoiceTranscriptText,
   voiceTranscriptEventId,
@@ -569,6 +575,135 @@ export function appendRelayVoiceTranscript(
   retainedWriter?: ClientVoiceSessionWriter,
 ): Promise<void> {
   return appendVoiceTranscript({ ...params, origin: "relay" }, retainedWriter);
+}
+
+/** Only the server's completed-playback owner can replace its exact durable consult final. */
+export function appendOwnedRelayVoiceTranscript(
+  input: Omit<
+    Parameters<typeof appendRelayVoiceTranscript>[0],
+    "role" | "entryId" | "providerOwned"
+  >,
+  playback: OwnedRelayPlayback & { assertCurrent: () => void },
+  retainedWriter?: ClientVoiceSessionWriter,
+): Promise<void> {
+  const params = { ...input, sessionTarget: { ...input.sessionTarget }, text: input.text.trim() };
+  const { assertCurrent: assertPlayback, consultRunId, terminalMessageId, playbackId } = playback;
+  if (!consultRunId.trim() || !terminalMessageId.trim() || !playbackId.trim()) {
+    return Promise.reject(new Error("owned voice replacement requires complete causal identity"));
+  }
+  if (!params.text || params.text.length > VOICE_TRANSCRIPT_QUEUE_POLICY.maxEntryChars) {
+    return Promise.reject(new Error("owned voice replacement requires the full bounded answer"));
+  }
+  return withClientVoiceSessionSettlement(
+    async () => {
+      const writer = retainedWriter ?? captureClientVoiceSessionWriter(params);
+      const assertCurrent = () => {
+        writer.assertCurrent();
+        assertPlayback();
+      };
+      return withClientVoiceSessionResources(retainedWriter ? [] : [writer], () =>
+        voiceSessionOperations.run(
+          operationKey(params.agentId, params.voiceSessionId),
+          async () => {
+            assertCurrent();
+            if (
+              params.sessionKey !== params.sessionTarget.sessionKey &&
+              resolveSessionStoreIdentity({
+                cfg: params.config ?? {},
+                agentId: params.agentId,
+                sessionKey: params.sessionKey,
+              }).canonicalKey !== params.sessionTarget.sessionKey
+            ) {
+              throw new Error("owned voice replacement targets another agent session");
+            }
+            const store = resolveUnsuffixedSqliteTargetFromSessionStorePath(
+              params.sessionTarget.storePath || writer.options.path,
+            );
+            if (isIncognitoSessionKey(params.sessionTarget.sessionKey)) {
+              throw new Error(
+                "owned voice replacement requires its durable relay transcript store",
+              );
+            }
+            // A storage alias is valid only while it names the captured relay database.
+            const assertTranscriptCurrent = () => {
+              assertCurrent();
+              assertExistingDatabaseIdentity(
+                store.path,
+                writer.identity.key,
+                writer.identity.birthtime,
+              );
+            };
+            const target = {
+              ...params.sessionTarget,
+              agentId: params.agentId,
+              storePath: writer.options.path,
+              env: writer.options.env,
+            };
+            const entry = await readSessionEntryReadOnlyInWorker(target, assertTranscriptCurrent);
+            if (!entry?.sessionId) {
+              throw new Error("owned voice replacement lost its consult session");
+            }
+            const record = (await writer.read(params.voiceSessionId))?.record;
+            if (!record) {
+              throw new Error("owned voice replacement lost its consult session");
+            }
+            const timestamp = params.timestamp ?? Date.now();
+            const transcript = { ...target, sessionId: entry.sessionId };
+            const message = buildPersistedVoiceMessage({
+              role: "assistant",
+              text: params.text,
+              timestamp,
+              provider: record.provider ?? "realtime",
+            });
+            // No failure reservation: a refused replacement leaves the original answer durable.
+            const turn = await appendExpectedSessionTranscriptTurn(transcript, {
+              config: params.config,
+              keyFormat: "agent-qualified",
+              expectedSessionId: entry.sessionId,
+              selectedSessionId: entry.sessionId,
+              selectedLifecycleRevision: entry.lifecycleRevision,
+              sessionFile: target.sessionKey,
+              assertCurrent: assertTranscriptCurrent,
+              messages: [
+                {
+                  eventId: `voice-owned:${terminalMessageId}`,
+                  now: timestamp,
+                  message: {
+                    ...message,
+                    __openclaw: {
+                      replacesRunId: consultRunId,
+                      replacesMessageId: terminalMessageId,
+                      voiceSessionId: params.voiceSessionId,
+                      playbackId,
+                    },
+                  },
+                },
+              ],
+              voiceTranscript: {
+                agentId: params.agentId,
+                sessionKey: params.sessionKey,
+                voiceSessionId: params.voiceSessionId,
+                owned: { consultRunId, terminalMessageId, playbackId },
+              },
+            });
+            const appended = turn.appendedMessages[0];
+            if (!appended || !turn.voiceSession) {
+              throw new Error("agent session changed before owned voice transcript append");
+            }
+            if (appended.appended) {
+              await publishTranscriptUpdate(transcript, {
+                message: appended.message,
+                messageId: appended.messageId,
+              });
+            }
+          },
+          { weight: params.text.length },
+        ),
+      );
+    },
+    undefined,
+    retainedWriter?.settlementContext,
+  );
 }
 
 const digestOptions = createClientVoiceMutationDigestDeliveryOptions(

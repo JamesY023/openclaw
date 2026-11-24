@@ -418,6 +418,43 @@ describe("GatewayRelayRealtimeTalkTransport", () => {
     expect(requestCallsFor(client, "talk.session.acknowledgeMark")).toHaveLength(0);
   });
 
+  it.each(["completed", "cancelled", "failed"] as const)(
+    "acknowledges owned playback only with its observed %s outcome",
+    async (outcome) => {
+      const { client, transport } = await startRelay();
+      relayEvent({ type: "ready", outputOwnership: "host" });
+      const talkEvent = { turnId: "turn-1" };
+      if (outcome !== "failed") {
+        emitAudio();
+      }
+      relayEvent({ type: "audioDone", talkEvent });
+      if (outcome === "cancelled") {
+        relayEvent({ type: "clear", talkEvent });
+      }
+      const checkpoint = { type: "mark", markName: "owned-talk:test", talkEvent };
+      relayEvent(checkpoint);
+      if (outcome === "completed") {
+        expect(requestCallsFor(client, "talk.session.acknowledgeMark")).toHaveLength(0);
+        const ended = createdSources[0]?.addEventListener.mock.calls.find(
+          ([name]) => name === "ended",
+        );
+        expect(ended).toBeDefined();
+        ended?.[1]();
+      }
+      await waitForFast(() =>
+        expect(requestCallsFor(client, "talk.session.acknowledgeMark")).toEqual([
+          [
+            "talk.session.acknowledgeMark",
+            { sessionId: "relay-1", markName: "owned-talk:test", outcome },
+          ],
+        ]),
+      );
+      relayEvent(checkpoint);
+      expect(requestCallsFor(client, "talk.session.acknowledgeMark")).toHaveLength(1);
+      await transport.stop();
+    },
+  );
+
   it("reclaims the input meter when its first level update stops the transport", async () => {
     vi.useFakeTimers();
     const client = createClient();

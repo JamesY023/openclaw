@@ -40,6 +40,7 @@ import { REALTIME_VOICE_DESCRIBE_VIEW_TOOL } from "../../../talk/describe-view-t
 import {
   cancelInternalRealtimeVoiceBrowserSession,
   projectInternalRealtimeVoicePublicConfig,
+  resolveInternalRealtimeVoiceBrowserSessionTransport,
   type InternalRealtimeVoiceBrowserSessionCreateRequest,
 } from "../../../talk/provider-internal.js";
 import { resolveConfiguredRealtimeVoiceProviderAsync } from "../../../talk/provider-resolver.js";
@@ -174,6 +175,36 @@ export const createTalkClient: GatewayRequestHandler = async (request) => {
         ErrorCodes.INVALID_REQUEST,
         `Realtime provider ${resolution.provider.id} does not support browser video frames`,
       );
+    }
+    if (
+      params.hostOwnedOutput &&
+      mode === "realtime" &&
+      brain === "agent-consult" &&
+      !wantsCameraFrames &&
+      (await resolveInternalRealtimeVoiceBrowserSessionTransport({
+        provider: resolution.provider,
+        providerConfig: resolution.providerConfig,
+        cfg: runtimeConfig,
+        agentId,
+        model: launchOptions.model,
+        hostOwnedOutput: true,
+      })) === "gateway-relay"
+    ) {
+      assertTargetCurrent();
+      const { voiceSessionId: _voiceSessionId, capabilities, ...relay } = params;
+      const { talkSessionHandlers } = await import("./session.js");
+      return await talkSessionHandlers["talk.session.create"]({
+        ...request,
+        params: {
+          ...relay,
+          ...(capabilities?.includes("voice-selection")
+            ? { capabilities: ["voice-selection"] }
+            : {}),
+          mode: "realtime",
+          transport: "gateway-relay",
+          brain: "agent-consult",
+        },
+      });
     }
     const providerInstructions = await resolveTalkRealtimeProviderInstructions({
       config: runtimeConfig,

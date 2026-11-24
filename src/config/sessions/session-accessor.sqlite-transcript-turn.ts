@@ -216,6 +216,9 @@ async function appendPreparedSessionTranscriptTurn(
       ),
     );
   }
+  if (options.voiceTranscript && "owned" in options.voiceTranscript) {
+    throw new Error("owned voice replacement requires the durable voice commit worker");
+  }
   if (memory || inputActor) {
     throw new Error("Actor transcript turns require preparation outside the transaction");
   }

@@ -333,6 +333,7 @@ export class RealtimeTalkSession {
         {
           sessionKey: this.sessionKey,
           ...options,
+          hostOwnedOutput: true,
         },
         { timeoutMs: DEFAULT_GATEWAY_REQUEST_TIMEOUT_MS },
       );
@@ -382,6 +383,7 @@ export class RealtimeTalkSession {
         transport: "gateway-relay",
         brain: "agent-consult",
         capabilities: ["voice-selection"],
+        hostOwnedOutput: true,
       },
       { timeoutMs: DEFAULT_GATEWAY_REQUEST_TIMEOUT_MS },
     );

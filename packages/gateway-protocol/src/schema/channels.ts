@@ -114,6 +114,7 @@ export const TalkEventSchema = Type.Object(
 const VoiceIdString = Type.String({ pattern: "^[A-Za-z0-9_-]{1,128}$" });
 
 export const TalkClientCreateParamsSchema = closedObject({
+  hostOwnedOutput: Type.Optional(Type.Boolean()),
   sessionKey: Type.Optional(NonEmptyString),
   voiceSessionId: Type.Optional(VoiceIdString),
   voiceChangeId: Type.Optional(NonEmptyString),
@@ -213,6 +214,7 @@ export const TalkAgentControlResultSchema = closedObject({
 });
 
 export const TalkSessionCreateParamsSchema = closedObject({
+  hostOwnedOutput: Type.Optional(Type.Boolean()),
   sessionKey: Type.Optional(Type.String()),
   voiceChangeId: Type.Optional(NonEmptyString),
   capabilities: Type.Optional(Type.Array(Type.Literal("voice-selection"), { uniqueItems: true })),

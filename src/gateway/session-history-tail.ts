@@ -1,5 +1,7 @@
 import { asPositiveSafeInteger } from "@openclaw/normalization-core/number-coercion";
 import { asOptionalRecord } from "@openclaw/normalization-core/record-coerce";
+import { isIntermediateAssistantTranscriptMessage } from "../agents/embedded-agent-runner/message-visibility.js";
+import { readTranscriptDisplayPosition } from "../chat/transcript-display-position.js";
 import type {
   PaginatedSessionHistory,
   SessionHistoryMessage,
@@ -7,6 +9,12 @@ import type {
 import { SessionTranscriptProjectionUnavailableError } from "../config/sessions/session-transcript-projection-error.js";
 import type { SessionEntry } from "../config/sessions/types.js";
 import { resolveTranscriptPageEnd } from "../sessions/transcript-anchor-page.js";
+import {
+  ownedVoiceTranscriptEventId,
+  readOwnedVoiceTranscriptReplacement,
+  readSessionTranscriptRunId,
+  resolveTerminalAssistantTranscriptRunId,
+} from "../sessions/transcript-events.js";
 import type { TranscriptReadWindow } from "../sessions/transcript-read-window.js";
 import {
   projectChatDisplayMessagesWithState,
@@ -127,6 +135,71 @@ export function readChatHistoryMessageId(message: unknown): string | undefined {
 export function readChatHistoryMessageSeq(message: unknown): number | undefined {
   const metadata = asOptionalRecord(asOptionalRecord(message)?.["__openclaw"]);
   return asPositiveSafeInteger(metadata?.seq);
+}
+
+/** Resolve only replacement IDs for terminal rows in the selected history window. */
+export async function readLaterOwnedVoiceFinalIds(params: {
+  messages: unknown[];
+  readScope: SessionTranscriptReadScope;
+  readers: SessionTranscriptPageReader;
+  displaySource: string | undefined;
+  snapshotSeq: number;
+  inspected?: Set<string>;
+  replaced?: Set<string>;
+}): Promise<Set<string>> {
+  const presentIds = new Set(params.messages.map(readChatHistoryMessageId));
+  const replaced = params.replaced ?? new Set<string>();
+  for (const message of params.messages) {
+    const id = readChatHistoryMessageId(message);
+    const seq = readChatHistoryMessageSeq(message);
+    if (
+      !id ||
+      seq === undefined ||
+      asOptionalRecord(message)?.stopReason !== "stop" ||
+      isIntermediateAssistantTranscriptMessage(message)
+    ) {
+      continue;
+    }
+    const runId = resolveTerminalAssistantTranscriptRunId(
+      message,
+      readSessionTranscriptRunId(message),
+    );
+    const replacementId = ownedVoiceTranscriptEventId(id);
+    if (!runId || presentIds.has(replacementId) || params.inspected?.has(id)) {
+      continue;
+    }
+    params.inspected?.add(id);
+    const found = await params.readers.readSessionMessageByIdAsync(
+      params.readScope,
+      replacementId,
+      params.displaySource === undefined
+        ? { allowResetArchiveFallback: true }
+        : { currentOnly: true, maxBytes: 16 * 1024 },
+    );
+    if (
+      !found.found ||
+      found.seq === undefined ||
+      found.seq <= seq ||
+      found.seq > params.snapshotSeq
+    ) {
+      continue;
+    }
+    const marker = readOwnedVoiceTranscriptReplacement(found.message);
+    if (marker?.messageId !== id || marker.runId !== runId) {
+      continue;
+    }
+    const metadata = asOptionalRecord(asOptionalRecord(found.message)?.["__openclaw"]);
+    if (
+      readTranscriptDisplayPosition(metadata?.transcriptPosition)?.source !== params.displaySource
+    ) {
+      throw new SessionTranscriptProjectionUnavailableError(
+        params.readScope.sessionId,
+        "window-changed",
+      );
+    }
+    replaced.add(id);
+  }
+  return replaced;
 }
 
 export function readChatHistoryPaginationKey(message: unknown): string | undefined {
@@ -402,6 +475,8 @@ async function readIncrementalChatHistoryTailAttempt(params: {
     overreadContextMessage,
   );
   let recoveryContext: unknown[] | undefined = offset === 0 ? [] : undefined;
+  const inspectedOwnedFinals = new Set<string>();
+  const replacedOwnedFinals = new Set<string>();
   const newestPageSeq = readSequence(rawMessages.at(-1));
   const filterWindowMessages = (messages: unknown[], contextMessage: unknown) =>
     sessionStartedAt === undefined
@@ -420,8 +495,13 @@ async function readIncrementalChatHistoryTailAttempt(params: {
     newerContext = recoveryContext ?? [],
   ) => {
     const filteredRawMessages = filterWindowMessages(messages, contextMessage);
+    const visibleCandidates = replacedOwnedFinals.size
+      ? filteredRawMessages.filter(
+          (message) => !replacedOwnedFinals.has(readChatHistoryMessageId(message) ?? ""),
+        )
+      : filteredRawMessages;
     const projection = projectChatDisplayMessagesWithState(
-      newerContext.length > 0 ? [...filteredRawMessages, ...newerContext] : filteredRawMessages,
+      newerContext.length > 0 ? [...visibleCandidates, ...newerContext] : visibleCandidates,
       {
         subagentCoordination: params.readers.subagentCoordination,
         includeCommentaryFallbacks: true,
@@ -450,6 +530,17 @@ async function readIncrementalChatHistoryTailAttempt(params: {
     return { filteredRawMessages, projected, projection };
   };
   const projectWindow = async () => {
+    if (offset > 0) {
+      await readLaterOwnedVoiceFinalIds({
+        messages: rawMessages,
+        readScope: params.readScope,
+        readers: params.readers,
+        displaySource: readPage.displaySource,
+        snapshotSeq: readPage.totalMessages,
+        inspected: inspectedOwnedFinals,
+        replaced: replacedOwnedFinals,
+      });
+    }
     const result = project();
     if (
       recoveryContext !== undefined ||

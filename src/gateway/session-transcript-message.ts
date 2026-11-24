@@ -1,6 +1,9 @@
 import { asOptionalRecord } from "@openclaw/normalization-core/record-coerce";
 import type { TranscriptDisplayPosition } from "../chat/transcript-display-position.js";
-import { readSessionTranscriptRunId } from "../sessions/transcript-events.js";
+import {
+  readOwnedVoiceTranscriptReplacement,
+  readSessionTranscriptRunId,
+} from "../sessions/transcript-events.js";
 import { isPendingAssistantError } from "./chat-display-projection.core.js";
 import {
   createCurrentUserProfileMessageProjector,
@@ -61,6 +64,16 @@ export function projectSessionMessagePayload(params: {
     ...(idempotencyKey ? { idempotencyKey } : {}),
     ...(params.messageSeq !== undefined ? { seq: params.messageSeq } : {}),
   });
+  if (readOwnedVoiceTranscriptReplacement(rawMessage)) {
+    // Appending a live or incremental row cannot retire its preceding visible final.
+    return {
+      projectionState: params.projectionState ?? {
+        assistantErrorPending: false,
+        turnBoundaryPending: false,
+      },
+      requiresHistoryReset: true,
+    };
+  }
   const historyProjection = params.historyDelta
     ? projectChatDisplayMessagesWithState([rawMessage], {
         ...params.projectionState,

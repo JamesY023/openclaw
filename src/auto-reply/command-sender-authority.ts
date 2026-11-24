@@ -27,6 +27,11 @@ export function getCommandSenderAuthority(
   return (context as CommandSenderContext | null | undefined)?.[COMMAND_SENDER_AUTHORITY];
 }
 
+/** Distinguish ordinary channel input from an explicitly unbound Gateway requester. */
+export function hasCommandSenderAuthority(context: object): boolean {
+  return Object.hasOwn(context, COMMAND_SENDER_AUTHORITY);
+}
+
 /** Only the trusted Talk consult client may attach a live requester for tool hooks. */
 export function getTalkToolSenderAuthority(
   context: object | null | undefined,
