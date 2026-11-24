@@ -98,31 +98,28 @@ describe("Gateway readiness console marker", () => {
     }
   });
 
-  it.each(["close", "deadline"] as const)(
-    "does not announce readiness after %s",
-    async (stop) => {
-      vi.useFakeTimers();
-      try {
-        const params = readinessFixture();
-        const announce = createGatewayReadyAnnouncer({
-          ...params,
-          isChatSendAvailable: () => true,
-          areSidecarsReady: () => true,
-          startupTrace: { mark: vi.fn() } as unknown as GatewayStartupTrace,
-        });
-        await announce();
-        if (stop === "close") {
-          params.close();
-        } else {
-          await vi.advanceTimersByTimeAsync(180_000);
-        }
-        params.setReady();
-        await vi.advanceTimersByTimeAsync(1_000);
-        expect(params.log.info).not.toHaveBeenCalled();
-        expect(vi.getTimerCount()).toBe(0);
-      } finally {
-        vi.useRealTimers();
+  it.each(["close", "deadline"] as const)("does not announce readiness after %s", async (stop) => {
+    vi.useFakeTimers();
+    try {
+      const params = readinessFixture();
+      const announce = createGatewayReadyAnnouncer({
+        ...params,
+        isChatSendAvailable: () => true,
+        areSidecarsReady: () => true,
+        startupTrace: { mark: vi.fn() } as unknown as GatewayStartupTrace,
+      });
+      await announce();
+      if (stop === "close") {
+        params.close();
+      } else {
+        await vi.advanceTimersByTimeAsync(180_000);
       }
-    },
-  );
+      params.setReady();
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(params.log.info).not.toHaveBeenCalled();
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });
